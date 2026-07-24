@@ -1,0 +1,107 @@
+{
+  "seats": [
+    {
+      "name": "hero",
+      "position": "SB",
+      "starting_stack": 200.0,
+      "hole_cards": [
+        "Ah",
+        "Jd"
+      ]
+    },
+    {
+      "name": "villain",
+      "position": "BB",
+      "starting_stack": 200.0,
+      "hole_cards": [
+        "As",
+        "Kc"
+      ]
+    }
+  ],
+  "hero": "hero",
+  "small_blind": 1.0,
+  "big_blind": 2.0,
+  "ante": 0.0,
+  "streets": [
+    {
+      "street": "preflop",
+      "cards": [],
+      "actions": [
+        {
+          "actor": "hero",
+          "type": "raise",
+          "street": "preflop",
+          "amount": 6.0
+        },
+        {
+          "actor": "villain",
+          "type": "raise",
+          "street": "preflop",
+          "amount": 20.0
+        },
+        {
+          "actor": "hero",
+          "type": "call",
+          "street": "preflop",
+          "amount": 20.0
+        }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards": [
+        "Ac",
+        "8h",
+        "3d"
+      ],
+      "actions": [
+        {
+          "actor": "hero",
+          "type": "check",
+          "street": "preflop",
+          "amount": 0.0
+        },
+        {
+          "actor": "villain",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 22.0
+        },
+        {
+          "actor": "hero",
+          "type": "call",
+          "street": "preflop",
+          "amount": 22.0
+        }
+      ]
+    },
+    {
+      "street": "turn",
+      "cards": [
+        "5s"
+      ],
+      "actions": [
+        {
+          "actor": "hero",
+          "type": "check",
+          "street": "preflop",
+          "amount": 0.0
+        },
+        {
+          "actor": "villain",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 55.0
+        },
+        {
+          "actor": "hero",
+          "type": "fold",
+          "street": "preflop",
+          "amount": 0.0
+        }
+      ]
+    }
+  ],
+  "notes": "Hero calls a 4-bet with AJo, flops an ace, and pays off."
+}

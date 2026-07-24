@@ -1,0 +1,81 @@
+# Semantic audit of the facts contract
+
+What every value handed to the model actually meant, as of the first live run,
+and what it was implicitly claiming. Categories:
+
+- **S** — exact state fact
+- **D** — exact derived calculation
+- **M** — sampled (Monte Carlo) calculation
+- **A** — calculation conditioned on an explicit assumption
+- **T** — simplified theoretical benchmark
+- **J** — model-generated strategic judgment (not a supplied fact at all)
+
+| Rendered as | True category | Problem |
+|---|---|---|
+| `Street`, `Hero`, `Board`, `Pot`, `To call` | S | none |
+| `Hero's made hand` | D | none, but *only* the made hand — no draws |
+| `Effective stack` | S | ambiguous name; it is the **start-of-street** stack (behind + already committed), not chips behind now |
+| `SPR` | D | **wrong**: used hero's own stack, not the effective one; numerator is start-of-street, denominator includes the live bet |
+| `Assumed villain range` | A | does not say whether it is pre-action or conditioned on the bet |
+| `Hero equity vs that range` | M or D | correct, and provenance was already carried |
+| `Pot odds` / `need X%` | D | none |
+| `EV of calling` | **A**, presented as D | assumes free run-out to showdown and full equity realization; ignores future betting; compares call vs **fold only**, never call vs raise |
+| `Minimum defence frequency` | T | reads as a prescription for hero |
+| `Villain's bluff must work X%` | T | reads as a claim about villain's actual strategy |
+| "nut flush draw with two overcards" | **J** | model-derived, unverifiable, absent from facts |
+
+## The four defects
+
+1. **`SPR` was numerically wrong.** `HandState.spr(name)` called
+   `effective_stack(name)` with a single name, which returns that player's own
+   stack. With hero 200 / villain 20 it reported 16.67 instead of 1.67. The
+   live example hid it because both stacks were equal.
+
+2. **`EV of calling` was mislabelled.** `equity * pot - (1 - equity) * to_call`
+   is exact on a terminal river call. On the flop it silently assumes the hand
+   is checked down with full equity realization. It was rendered identically in
+   both cases.
+
+3. **Range conditioning was unstated.** The same string could mean "villain's
+   opening range" or "the range villain bets here", which are different
+   distributions producing different equities.
+
+4. **Only numbers were checkable.** Hand-reading and board-texture claims were
+   entirely outside the facts, so the checker could not see them.
+
+## Changes made
+
+- `AnalysisFact` — a fact carries `category`, `assumptions`, `scope`,
+  `provenance`. The prompt block groups by category.
+- `HandState.spr` fixed to use the effective stack; `effective_stack` and
+  `stack_behind` given unambiguous names and tests.
+- `ev_call` split: `ev_call_terminal` (exact) vs
+  `ev_call_if_realized` (assumption-carrying). Non-terminal streets label it
+  and add the call-vs-raise caveat.
+- `VillainRange` carries `conditioning`: `pre_action` or `action_conditioned`.
+- `calculations/features.py` computes draws, texture, overcards, board pairing
+  as deterministic facts.
+- MDF and alpha relabelled as reference values with stated assumptions.
+- Evaluator asserts "continuing beats folding", not "call is uniquely correct".
+
+## First benchmark run (gemini-3.6-flash, prompt v2) — 8/9
+
+The semantic fixes landed. Responses named the range conditioning, flagged
+call-vs-raise as an open question in the exact words the facts use, and treated
+sampled equity as approximate.
+
+The single failure is the most instructive result in the run. On
+`turn-draw-realization` the model needed an implied-odds figure, was not given
+one, derived it, and cited it — "you would need to win over 100 additional
+chips". The grounding checker flagged the bare `100` as ungrounded, which is
+exactly right: the model computed rather than quoted.
+
+**The model's number was sound.** The break-even is 95.3 extra chips against a
+stack of 80, so its conclusion — that the chips are not there — holds. An
+earlier check of mine put the figure at 65.3 by counting hero's own call as
+winnings; that is wrong, and it would make a hopeless draw look playable. The
+convention now has its own regression test.
+
+The fix is therefore not "stop the model reasoning" but "supply the fact it
+predictably reaches for": `implied_odds_breakeven` is now computed on
+non-terminal streets and rendered with its assumptions.

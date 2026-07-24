@@ -1,0 +1,115 @@
+{
+  "seats": [
+    {
+      "name": "hero",
+      "position": "BTN",
+      "starting_stack": 100.0,
+      "hole_cards": [
+        "As",
+        "Ks"
+      ]
+    },
+    {
+      "name": "villain",
+      "position": "BB",
+      "starting_stack": 100.0,
+      "hole_cards": [
+        "Qh",
+        "Qd"
+      ]
+    }
+  ],
+  "hero": "hero",
+  "small_blind": 0.5,
+  "big_blind": 1.0,
+  "ante": 0.0,
+  "streets": [
+    {
+      "street": "preflop",
+      "cards": [],
+      "actions": [
+        {
+          "actor": "hero",
+          "type": "raise",
+          "street": "preflop",
+          "amount": 3.0
+        },
+        {
+          "actor": "villain",
+          "type": "call",
+          "street": "preflop",
+          "amount": 3.0
+        }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards": [
+        "Qs",
+        "2s",
+        "9c"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "check",
+          "street": "preflop",
+          "amount": 0.0
+        },
+        {
+          "actor": "hero",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 4.0
+        },
+        {
+          "actor": "villain",
+          "type": "call",
+          "street": "preflop",
+          "amount": 4.0
+        }
+      ]
+    },
+    {
+      "street": "turn",
+      "cards": [
+        "7s"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 10.0
+        },
+        {
+          "actor": "hero",
+          "type": "call",
+          "street": "preflop",
+          "amount": 10.0
+        }
+      ]
+    },
+    {
+      "street": "river",
+      "cards": [
+        "2d"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 30.0
+        },
+        {
+          "actor": "hero",
+          "type": "call",
+          "street": "preflop",
+          "amount": 30.0
+        }
+      ]
+    }
+  ],
+  "notes": "Hero flops a flush draw, gets there, and faces a big river bet."
+}

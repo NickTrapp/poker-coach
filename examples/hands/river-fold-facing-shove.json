@@ -1,0 +1,127 @@
+{
+  "seats": [
+    {
+      "name": "hero",
+      "position": "CO",
+      "starting_stack": 100.0,
+      "hole_cards": [
+        "Kd",
+        "Qc"
+      ]
+    },
+    {
+      "name": "villain",
+      "position": "BB",
+      "starting_stack": 100.0,
+      "hole_cards": [
+        "9h",
+        "9c"
+      ]
+    }
+  ],
+  "hero": "hero",
+  "small_blind": 0.5,
+  "big_blind": 1.0,
+  "ante": 0.0,
+  "streets": [
+    {
+      "street": "preflop",
+      "cards": [],
+      "actions": [
+        {
+          "actor": "hero",
+          "type": "raise",
+          "street": "preflop",
+          "amount": 2.5
+        },
+        {
+          "actor": "villain",
+          "type": "call",
+          "street": "preflop",
+          "amount": 2.5
+        }
+      ]
+    },
+    {
+      "street": "flop",
+      "cards": [
+        "Kc",
+        "9d",
+        "4h"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "check",
+          "street": "preflop",
+          "amount": 0.0
+        },
+        {
+          "actor": "hero",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 3.5
+        },
+        {
+          "actor": "villain",
+          "type": "call",
+          "street": "preflop",
+          "amount": 3.5
+        }
+      ]
+    },
+    {
+      "street": "turn",
+      "cards": [
+        "2c"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "check",
+          "street": "preflop",
+          "amount": 0.0
+        },
+        {
+          "actor": "hero",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 9.0
+        },
+        {
+          "actor": "villain",
+          "type": "raise",
+          "street": "preflop",
+          "amount": 26.0
+        },
+        {
+          "actor": "hero",
+          "type": "call",
+          "street": "preflop",
+          "amount": 26.0
+        }
+      ]
+    },
+    {
+      "street": "river",
+      "cards": [
+        "7d"
+      ],
+      "actions": [
+        {
+          "actor": "villain",
+          "type": "bet",
+          "street": "preflop",
+          "amount": 62.5
+        },
+        {
+          "actor": "hero",
+          "type": "fold",
+          "street": "preflop",
+          "amount": 0.0
+        }
+      ]
+    }
+  ],
+  "notes": "Hero has top pair on a board where villain's shove represents everything better."
+}
