@@ -138,15 +138,59 @@ def test_percentages_whose_digits_look_like_ranks_survive_masking(text):
     assert claims[0].text == text
 
 
-def test_bare_digit_pair_is_read_as_a_number_not_notation():
-    # Documented trade-off: "77" with no marker is a number, not pocket sevens.
-    claims = extract_claims("The pot is 77 now.")
+@pytest.mark.parametrize(
+    "text",
+    ["lower sets (`77`, `22`)", "pocket 22 is behind", "a set of 99 is ahead",
+     "a pair of 88 wins"],
+)
+def test_a_marked_repeated_rank_reads_as_a_pocket_pair(text):
+    """A live run flagged "lower sets (`77`, `22`)" as invented numbers."""
+
+    assert extract_claims(text) == []
+
+
+def test_holds_does_not_hide_a_percentage():
+    """"holds" reads equally well before cards and before quantities, so it
+    is not a marker. It used to be, and swallowed the figure."""
+
+    claims = extract_claims("Villain holds 77% equity.")
+    assert [c.text for c in claims] == ["77%"]
+
+
+def test_holding_does_not_hide_a_chip_amount():
+    claims = extract_claims("Villain is holding 77 chips.")
     assert [c.value for c in claims] == [77.0]
 
 
-def test_known_notation_rescues_bare_digit_ranges():
-    # The generic patterns leave "99, 77, 22" alone, but the spot knows its own
-    # range, so masking it literally recovers the right reading.
+def test_a_percent_sign_vetoes_the_pocket_pair_reading_entirely():
+    # Closes the class rather than the instance: no rank is written with a
+    # percent sign, so the marker never wins against one.
+    assert [c.text for c in extract_claims("pocket 77% of the time")] == ["77%"]
+    assert [c.text for c in extract_claims("a set of 99% equity")] == ["99%"]
+
+
+def test_a_repeated_rank_with_a_percent_sign_is_still_a_statistic():
+    # The masking must not swallow "88% equity" — that is the exact shape of
+    # an invented figure the checker exists to catch.
+    claims = extract_claims("You have 88% equity.")
+    assert [c.text for c in claims] == ["88%"]
+
+
+@pytest.mark.parametrize(
+    "text,value",
+    [("The pot is 77 now.", 77.0), ("You must call 44 chips.", 44.0),
+     ("The pot is 76 now.", 76.0)],
+)
+def test_an_unmarked_repeated_rank_is_still_an_amount(text, value):
+    """Masking every bare 22-99 would blind the checker to eight common
+    pot, stack and raise sizes — on a checker that already ignores 0-10."""
+
+    assert [c.value for c in extract_claims(text)] == [value]
+
+
+def test_known_notation_covers_an_unmarked_range_list():
+    # A bare "99, 77, 22" carries no marker, so the generic patterns leave it —
+    # but the spot knows its own range and masks it literally.
     text = "Against QQ, 99, 77, 22 you are well ahead."
     assert extract_claims(text) != []
     assert extract_claims(text, known=["QQ, 99, 77, 22"]) == []

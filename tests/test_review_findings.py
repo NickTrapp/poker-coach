@@ -992,3 +992,38 @@ def test_three_handed_preflop_order_is_button_then_blinds():
     assert action_order(Street.FLOP, seats) == [
         Position.SB, Position.BB, Position.BTN
     ]
+
+
+def test_strict_false_relaxes_turn_order():
+    """Needs three players: with only one able to act, nothing is out of turn.
+
+    An earlier version of this test used the heads-up under-raise state, where
+    `a` is genuinely next — so it applied an in-turn action twice and proved
+    nothing about turn order at all, while claiming to guard the docs.
+    """
+
+    state = three_handed_preflop().apply(
+        Action(actor="btn", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    )
+    assert state.betting_round().next_actor(state) == "sb"
+
+    # BB is genuinely out of turn here.
+    out_of_turn = Action(actor="bb", type=ActionType.CHECK,
+                         street=Street.PREFLOP)
+    state.apply(out_of_turn)                      # tolerated without strict
+
+    with pytest.raises(ValueError, match="it is sb's turn"):
+        state.apply(out_of_turn, strict=True)
+
+
+def test_reopening_is_enforced_under_both_modes():
+    """`strict` does not gate reopening — that lives in `legal_actions`."""
+
+    state = short_stack_underraise()
+    shove = Action(actor="a", type=ActionType.RAISE, amount=100.5,
+                   street=Street.PREFLOP)
+    for strict in (False, True):
+        with pytest.raises(ValueError, match="may not raise here"):
+            state.apply(shove, strict=strict)

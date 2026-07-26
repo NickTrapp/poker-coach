@@ -102,6 +102,23 @@ _MASK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"{_EDGE}{_RANK}{_RANK}[so]{_END}"),
     # Bare classes containing a face rank: QQ, AK, AQ, T9
     re.compile(rf"{_EDGE}(?:{_FACE}{_RANK}|{_RANK}{_FACE}){_END}"),
+    # Numeric pocket pairs — but only where the text marks them as notation.
+    # Treating every standalone 22, 33 ... 99 as a rank blinded the checker to
+    # eight values that occur naturally as pots, stacks and raise sizes, on a
+    # checker that already ignores 0-10. So a signal is required:
+    #   `77`                      inline code, how the live failure was written
+    #   pocket 77 / set of 77 / pair of 77
+    # "The pot is 77 now" and "call 44 chips" stay checkable.
+    #
+    # "holds" and "holding" are deliberately absent: they read equally well
+    # before cards and before quantities, so "villain holds 77% equity" lost
+    # its percentage. A trailing percent sign vetoes the whole rule for the
+    # same reason — no rank is ever written with one.
+    re.compile(r"`([2-9])\1`"),
+    re.compile(
+        rf"(?i:(?<=pocket )|(?<=set of )|(?<=sets of )|(?<=pair of ))"
+        rf"([2-9])\1(?![\w.]|\s*%)"
+    ),
     # Explicit cards, possibly concatenated: AsKs, Qs2s9c
     re.compile(rf"{_EDGE}(?:{_RANK}[cdhs])+{_END}"),
 )
@@ -257,6 +274,7 @@ def grounded_values(analysis: SpotAnalysis) -> tuple[set[float], set[float]]:
     numbers: set[float] = {
         analysis.total_pot,
         analysis.to_call,
+        analysis.pot_after_call,
         analysis.effective_stack,
         analysis.hero_stack_behind,
         analysis.ev_call_vs_fold,

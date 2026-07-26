@@ -155,6 +155,19 @@ Do not "fix" an equity number by adjusting a test expectation. Published
 per-class preflop equities are rounded and suit-generic; exact enumeration is
 the authority.
 
+## When the model cites a number you did not give it
+
+The reflex is to widen `grounded_values()`. Resist it. The one live case —
+a model citing "a total pot of 35" from a pot of 20 and a call of 15 — was the
+checker being *right*: the facts implied that number but never stated it, and
+"the model quotes, never computes" makes computing it a violation.
+
+Allowing arithmetic closure has no stopping point: pot after calling, then pot
+after a raise, then final stack, then percentage differences, and the rule is
+gone. Add the quantity as a named `AnalysisFact` instead. It is usually worth
+saying out loud anyway — `Pot after hero calls` is more useful to a student
+than leaving them to do the addition.
+
 ## Poker notation in text processing
 
 Anything that parses response text must mask card and range tokens before
@@ -173,11 +186,15 @@ Enforcement has two tiers, and the split is deliberate:
 
 - **Always**: the action's street tag, the minimum raise, and that a street
   cannot be left with a bet unmatched. All derivable from state alone.
-- **`strict=True` only**: turn order and raise-reopening. These need the
-  street's action history, which a directly-built `HandState` cannot supply.
-  Replay and the table runner pass `strict=True`; test fixtures generally
-  cannot. Without history the min-raise floor also drops to the big blind —
-  permissive, never wrong.
+- **`strict=True` only**: turn order, and nothing else. It needs the street's
+  action history, which a directly-built `HandState` cannot supply. Replay and
+  the table runner pass it; test fixtures generally cannot.
+
+`strict` does **not** gate raise-reopening — that lives in `legal_actions`,
+which `validate` always consults, and degrades to permissive without history.
+So `replay(strict=False)` relaxes turn order but still rejects a forbidden
+re-raise. Without history the min-raise floor also drops to the big blind:
+permissive, never wrong.
 
 An all-in is always legal regardless of size. An under-raise all-in does *not*
 reopen the betting for players who already acted.

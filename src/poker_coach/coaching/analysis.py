@@ -172,6 +172,21 @@ class SpotAnalysis:
     call_is_profitable = continuing_beats_folding
 
     @property
+    def pot_after_call(self) -> float:
+        """The pot once hero calls — the denominator of the pot-odds figure.
+
+        Supplied because the model predictably reaches for it: a live run cited
+        "a total pot of 35" from a pot of 20 and a call of 15, and the checker
+        flagged it as invented. It was arithmetic the facts implied but never
+        stated. Widening the checker to accept derived combinations instead
+        would have no principled stopping point — pot after a raise, final
+        stack, percentage differences — and would quietly retire the rule that
+        the model quotes rather than computes.
+        """
+
+        return self.total_pot + self.to_call
+
+    @property
     def equity_surplus(self) -> float:
         """How much equity hero has above (or below) the price."""
 
@@ -294,6 +309,15 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
     )
 
     if facing_bet:
+        facts.append(
+            AnalysisFact(
+                "Pot after hero calls",
+                f"{a['total_pot'] + a['to_call']:g}",
+                FactCategory.DERIVED,
+                scope="what hero is playing for; the denominator of the pot-odds "
+                      "figure below",
+            )
+        )
         facts.append(
             AnalysisFact(
                 "Pot odds",
