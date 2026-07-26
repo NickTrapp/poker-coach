@@ -127,6 +127,13 @@ an effective stack at all and once produced a 10x-wrong SPR.
 **Monte Carlo takes an explicit `rng`.** Every sampling path accepts a
 `random.Random` so tests can pin it. Never call the module-level `random`.
 
+**A draw must be hero's own, and must have a card to come.** `features.py`
+counts an out only when hero's resulting hand beats what the *community cards
+alone* would make — a board of JsTs7c9c makes J-T-9-8-7 with any eight, and
+calling that hero's gutshot is wrong twice over. Draws are also suppressed on a
+complete board: four to a flush on the river is not a draw, nothing is coming.
+Both shipped to a live session before being caught.
+
 **Equity reports its own provenance.** `EquityResult.exact` says whether the
 result was enumerated or sampled. The coach surfaces this; don't drop it.
 
@@ -230,6 +237,37 @@ archetype pairings **with mixed stack sizes** (so side pots actually trigger)
 and assert: chips are conserved, awards sum to the pot, the history replays to
 the same pot, results are zero-sum, and nobody wins more than they could cover.
 Single-hand tests miss all of these.
+
+## Practice mode
+
+`practice/` orchestrates everything else. Two rules it must keep:
+
+- **A human is just another `Player`.** `PracticeSession` drives
+  `players.table.play_hand` with a `CallbackPlayer`; it does not re-implement a
+  betting round. Anything else reintroduces the two-copies-drift bug.
+- **The range is configuration, never inference.** `PracticeConfig.range_for()`
+  returns a `RangeAssumption` the caller set. Nothing derives what the opponent
+  holds from how the archetype behaves — that needs a strategy model this
+  package does not have. Deriving one from the policy (simulate how each combo
+  acts in the spot) is the natural next step and is *not* built.
+
+Feedback is three-way split: `verified` (deterministic calculations, no model),
+`interpretation` (the model's read), `unresolved` (the OPEN facts). Only the
+middle one needs a model, which is what makes the fallback honest. Never merge
+them into one block — a student reads undifferentiated prose with uniform
+confidence, which is the failure this project guards against on the model side.
+
+**Deterministic is not exact.** The `verified` heading is conditional on
+`analysis.equity.exact`: sampled equity makes every figure derived from it an
+estimate, including a terminal call's EV. The tree being terminal says nothing
+about the precision of the equity feeding it. Never label a sampled figure
+"exact" — that is the same confidence-boundary error the fact categories exist
+to prevent, and it is worse here because this layer faces the student.
+
+Grounding failure does **not** block. One repair request quoting the failed
+claims, then withhold the prose and show the arithmetic with a warning. The
+checker matches magnitudes, not meanings, so it is noisy in both directions and
+must not be load-bearing.
 
 ## Not yet built
 

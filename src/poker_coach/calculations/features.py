@@ -149,7 +149,32 @@ def board_texture(board: Sequence[Card]) -> BoardTexture:
     )
 
 
+def _plays_the_hand(
+    hole: Sequence[Card], board: Sequence[Card], out: Card
+) -> bool:
+    """True when ``out`` gives hero something the community cards alone do not.
+
+    A draw belongs to hero only if hero's cards are part of it. With a board of
+    JsTs7c9c an eight completes J-T-9-8-7 *on the board* — every player holds
+    that straight, so calling it hero's "gutshot" is wrong twice over: it is
+    not a draw and it is not hero's.
+
+    Fewer than five community cards cannot make a hand on their own, so
+    everything counts at that point.
+    """
+
+    community = [*board, out]
+    if len(community) < 5:
+        return True
+    return evaluate([*hole, *community]).score > evaluate(community).score
+
+
 def _flush_draw(hole: Sequence[Card], board: Sequence[Card]) -> FlushDraw | None:
+    # A draw needs a card to come. On a complete board there is nothing left to
+    # draw to, however many of a suit hero happens to hold.
+    if len(board) >= 5:
+        return None
+
     cards = [*hole, *board]
     counts = Counter(card.suit for card in cards)
 
@@ -199,8 +224,11 @@ def _straight_draw(hole: Sequence[Card], board: Sequence[Card]) -> StraightDraw 
     outs = []
     for card in remaining_deck(sorted(set(cards), key=str)):
         category = evaluate([*cards, card]).category
-        if HandCategory.STRAIGHT <= category < HandCategory.FLUSH:
-            outs.append(card)
+        if not (HandCategory.STRAIGHT <= category < HandCategory.FLUSH):
+            continue
+        if not _plays_the_hand(hole, board, card):
+            continue  # the board makes that straight without hero
+        outs.append(card)
     if not outs:
         return None
 

@@ -64,6 +64,42 @@ jobs:
       - name: Run the test suite
         run: pytest -q
 
+      # Exercises the installed console script, not the source tree. A green
+      # unit suite says nothing about whether a package made it into the
+      # commit: `practice/` in .gitignore once matched src/poker_coach/practice
+      # at any depth, so the CLI shipped importing a module that was never
+      # committed, and every test still passed because the tests were missing
+      # too.
+      - name: Smoke-test the installed CLI
+        run: |
+          set -e
+          poker-coach --help > /dev/null
+          printf 'f\nf\nf\nf\n' | poker-coach practice \
+            --hands 1 --provider none --seed 1 --iterations 200 --log-dir ''
+          poker-coach eval AsKsQsJsTs2h3d
+          poker-coach review examples/hands/thin-river-call.json --replay > /dev/null
+
+      - name: Every package under src/ must be importable from the install
+        run: |
+          cd /tmp   # not the source tree, so only the installed copy counts
+          python - <<'PY'
+          import importlib, pkgutil, sys
+          import poker_coach
+
+          missing = []
+          for info in pkgutil.walk_packages(
+              poker_coach.__path__, prefix="poker_coach."
+          ):
+              try:
+                  importlib.import_module(info.name)
+              except ImportError as exc:  # optional SDKs are allowed to be absent
+                  if "pip install" not in str(exc):
+                      missing.append(f"{info.name}: {exc}")
+          if missing:
+              sys.exit("modules failed to import:\n  " + "\n  ".join(missing))
+          print("every module imports from the installed package")
+          PY
+
   # A second install *with* both SDKs, so the client tests actually execute
   # instead of skipping. The Gemini request-shape tests build real
   # google.genai types, so an SDK change fails here rather than in production.
