@@ -135,13 +135,21 @@ whitespace first (`" ".join(text.split())`) or a reflow silently breaks them.
 
 ## Verifying math changes
 
-Two checks exist that the test suite doesn't run (too slow, but worth running by
-hand after touching the evaluator or sampler):
+```bash
+python scripts/verify_math.py        # ~22s: full enumeration + sampler check
+python scripts/verify_math.py --quick # sampler only
+python scripts/stress_hands.py       # ~40s: 1200 hands, all invariants
+```
 
-- Enumerate all 2,598,960 five-card hands and compare category counts against
-  the known distribution (40 straight flushes, 624 quads, … 1,302,540 high card).
-- Compare the Monte Carlo sampler against exact enumeration on turn spots; every
-  deviation should sit inside the reported margin of error.
+`verify_math.py` enumerates all 2,598,960 five-card hands against the published
+category distribution, and checks the Monte Carlo sampler against exact
+enumeration on turn spots. `stress_hands.py` plays hands across 2-9 seats with
+mixed stacks and asserts chips conserved, awards summing to the pot, zero-sum
+results, and strict replay. CI runs both.
+
+Simulated play only breaks in volume: the bugs found so far needed 300, 500 and
+1500 hands to surface. Run `stress_hands.py` after touching the runner or the
+player policy — no single-hand test substitutes.
 
 Do not "fix" an equity number by adjusting a test expectation. Published
 per-class preflop equities are rounded and suit-generic; exact enumeration is

@@ -30,6 +30,14 @@ Run the tests:
 .venv/bin/python -m pytest -q
 ```
 
+Two checks live outside the unit suite because they take ~20s each, and CI runs
+both on every push:
+
+```bash
+.venv/bin/python scripts/verify_math.py    # all 2,598,960 hands + sampler bias
+.venv/bin/python scripts/stress_hands.py   # 1200 simulated hands, all invariants
+```
+
 ## Quickstart
 
 ```python
