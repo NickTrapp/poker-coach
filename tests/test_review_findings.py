@@ -740,7 +740,7 @@ def test_a_street_with_nobody_to_act_records_no_action():
     state = all_in_opponent_flop()
     players = {"hero": make_player("hero", "maniac", rng=_random.Random(1),
                                    iterations=40)}
-    after = _play_street(state, players, ["hero"], record)
+    after = _play_street(state, players, record)
     assert record == []
     assert after.total_pot == state.total_pot
 
@@ -771,3 +771,224 @@ def test_analyse_refuses_a_finished_hand():
     )
     with pytest.raises(ValueError, match="the hand is over"):
         analyze(state, villain_range="22+", iterations=100, rng=random.Random(1))
+
+
+# ============================= third review round ============================
+
+
+def three_handed_preflop() -> HandState:
+    """BTN, SB, BB with blinds posted. Preflop order is BTN, SB, BB."""
+
+    return HandState(
+        players=[
+            PlayerState(name="btn", position=Position.BTN, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs"))),
+            PlayerState(name="sb", position=Position.SB, stack=99.5,
+                        hole_cards=tuple(parse_cards("7h7d")),
+                        committed_this_street=0.5),
+            PlayerState(name="bb", position=Position.BB, stack=99.0,
+                        hole_cards=tuple(parse_cards("QhQd")),
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    )
+
+
+def test_action_continues_clockwise_after_a_raise():
+    """BTN calls, SB raises — BB must act before BTN, not after.
+
+    Scanning from the top of the street order returned BTN, because BTN owed
+    chips again. Heads-up hid this: there is only one candidate after the
+    aggressor.
+    """
+
+    state = three_handed_preflop().apply(
+        Action(actor="btn", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="sb", type=ActionType.RAISE, amount=4.0,
+               street=Street.PREFLOP),
+        strict=True,
+    )
+    assert state.betting_round().next_actor(state) == "bb"
+
+
+def test_the_cursor_wraps_back_round_to_the_original_caller():
+    state = three_handed_preflop().apply(
+        Action(actor="btn", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="sb", type=ActionType.RAISE, amount=4.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="bb", type=ActionType.CALL, amount=4.0,
+               street=Street.PREFLOP),
+        strict=True,
+    )
+    assert state.betting_round().next_actor(state) == "btn"
+
+    closed = state.apply(
+        Action(actor="btn", type=ActionType.CALL, amount=4.0,
+               street=Street.PREFLOP),
+        strict=True,
+    )
+    assert closed.betting_round().is_complete(closed)
+
+
+def test_acting_out_of_turn_after_a_raise_is_rejected():
+    state = three_handed_preflop().apply(
+        Action(actor="btn", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="sb", type=ActionType.RAISE, amount=4.0,
+               street=Street.PREFLOP),
+        strict=True,
+    )
+    with pytest.raises(ValueError, match="it is bb's turn"):
+        state.apply(
+            Action(actor="btn", type=ActionType.CALL, amount=4.0,
+                   street=Street.PREFLOP),
+            strict=True,
+        )
+
+
+def test_a_folded_callers_chips_stay_in_the_reconstructed_pot():
+    """BTN raises 3, SB calls, BB raises 10, BTN folds, SB raises 30.
+
+    The pot in front of SB's raise is 3 + 3 + 10 = 16. Replaying BTN's fold as
+    a commitment of zero erased its 3, giving 13 and an alpha of 67.5% instead
+    of 62.79%.
+    """
+
+    state = three_handed_preflop()
+    for actor, kind, amount in [
+        ("btn", ActionType.RAISE, 3.0),
+        ("sb", ActionType.CALL, 3.0),
+        ("bb", ActionType.RAISE, 10.0),
+        ("btn", ActionType.FOLD, 0.0),
+        ("sb", ActionType.RAISE, 30.0),
+    ]:
+        state = state.apply(
+            Action(actor=actor, type=kind, amount=amount, street=Street.PREFLOP)
+        )
+
+    betting = state.betting_round()
+    assert betting.pot_before_aggression == pytest.approx(16.0)
+    assert betting.last_wager == pytest.approx(27.0)
+
+    from poker_coach.calculations.pot_odds import bluff_success_threshold
+
+    assert bluff_success_threshold(
+        betting.pot_before_aggression, betting.last_wager
+    ) == pytest.approx(0.6279, abs=1e-4)
+
+
+def test_a_folded_aggressors_chips_stay_in_the_reconstructed_pot():
+    """The player who folds is the one who bet earlier in the street."""
+
+    state = three_handed_preflop()
+    for actor, kind, amount in [
+        ("btn", ActionType.RAISE, 6.0),
+        ("sb", ActionType.CALL, 6.0),
+        ("bb", ActionType.RAISE, 20.0),
+        ("btn", ActionType.FOLD, 0.0),     # folds having put in 6
+        ("sb", ActionType.RAISE, 60.0),
+    ]:
+        state = state.apply(
+            Action(actor=actor, type=kind, amount=amount, street=Street.PREFLOP)
+        )
+    betting = state.betting_round()
+    # 6 (folded BTN) + 6 (SB) + 20 (BB) = 32 in front of SB's raise.
+    assert betting.pot_before_aggression == pytest.approx(32.0)
+    assert betting.last_wager == pytest.approx(54.0)
+
+
+def test_a_check_does_not_erase_a_posted_blind():
+    """The big blind's option: checking must not zero its posted chip."""
+
+    state = three_handed_preflop().apply(
+        Action(actor="btn", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="sb", type=ActionType.CALL, amount=1.0,
+               street=Street.PREFLOP),
+        strict=True,
+    ).apply(
+        Action(actor="bb", type=ActionType.CHECK, street=Street.PREFLOP),
+        strict=True,
+    )
+    assert state.betting_round().committed_when_acted["bb"] == pytest.approx(1.0)
+
+
+# --- an order oracle written from the rules, not from the implementation ---
+
+
+def expected_order(street: Street, seats: list[Position]) -> list[Position]:
+    """Independent statement of hold'em action order.
+
+    Deliberately not derived from `action_order`: two copies of the same
+    mistake agree with each other, which is exactly how the multiway ordering
+    bug survived a green 1500-hand replay suite.
+    """
+
+    clockwise = [
+        Position.SB, Position.BB, Position.UTG, Position.UTG1, Position.MP,
+        Position.LJ, Position.HJ, Position.CO, Position.BTN,
+    ]
+    seated = [p for p in clockwise if p in seats]
+
+    if street is Street.PREFLOP:
+        # Opens left of the big blind; the blinds close.
+        cut = seated.index(Position.BB) + 1
+        return seated[cut:] + seated[:cut]
+
+    # The button closes; heads-up the small blind holds it.
+    if Position.BTN in seats:
+        button = Position.BTN
+    elif len(seated) == 2:
+        button = seated[0]
+    else:
+        button = seated[-1]
+    cut = seated.index(button) + 1
+    return seated[cut:] + seated[:cut]
+
+
+@pytest.mark.parametrize(
+    "seats",
+    [
+        [Position.SB, Position.BB],
+        [Position.BTN, Position.BB],
+        [Position.SB, Position.BB, Position.BTN],
+        [Position.SB, Position.BB, Position.CO],
+        [Position.SB, Position.BB, Position.UTG, Position.BTN],
+        [Position.SB, Position.BB, Position.UTG, Position.HJ, Position.CO,
+         Position.BTN],
+    ],
+    ids=lambda s: f"{len(s)}-handed",
+)
+@pytest.mark.parametrize(
+    "street", [Street.PREFLOP, Street.FLOP, Street.TURN, Street.RIVER]
+)
+def test_action_order_matches_an_independent_oracle(seats, street):
+    from poker_coach.domain.betting import action_order
+
+    assert action_order(street, set(seats)) == expected_order(street, seats)
+
+
+def test_three_handed_preflop_order_is_button_then_blinds():
+    """Spelled out rather than derived, as a sanity anchor for the oracle."""
+
+    from poker_coach.domain.betting import action_order
+
+    seats = {Position.SB, Position.BB, Position.BTN}
+    assert action_order(Street.PREFLOP, seats) == [
+        Position.BTN, Position.SB, Position.BB
+    ]
+    assert action_order(Street.FLOP, seats) == [
+        Position.SB, Position.BB, Position.BTN
+    ]

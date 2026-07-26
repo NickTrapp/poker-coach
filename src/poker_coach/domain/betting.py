@@ -168,6 +168,12 @@ class BettingRound:
     committed_when_acted: dict[str, float] = field(default_factory=dict)
     #: Names in the order they act, filtered to those still able to act.
     order: tuple[str, ...] = ()
+    #: Every seat in action order, including those who cannot act. Needed to
+    #: locate the cursor, since the last actor may since have gone all-in.
+    full_order: tuple[str, ...] = ()
+    #: Who acted most recently on this street. The betting resumes clockwise
+    #: from here, not from the top of the order.
+    last_actor: str | None = None
     #: True when the history was available to derive turn-dependent facts.
     has_history: bool = False
     #: Chips the last aggressor *added* on their aggressive action, and the pot
@@ -217,8 +223,13 @@ class BettingRound:
                 last_wager = action.amount - running.get(action.actor, 0.0)
                 pot_before = state.pot + sum(running.values())
 
-            running[action.actor] = action.amount
-            committed_when_acted[action.actor] = action.amount
+            # Only money-in actions change a commitment. Folds and checks carry
+            # amount 0, and assigning that erased a folded player's chips from
+            # the reconstructed pot — chips that are still very much in the
+            # middle. A fold after calling 3 must leave that 3 counted.
+            if action.type.puts_money_in:
+                running[action.actor] = action.amount
+            committed_when_acted[action.actor] = running.get(action.actor, 0.0)
 
         if last_aggressor is None:
             # No recorded aggression. Postflop a single live bet is
@@ -236,6 +247,8 @@ class BettingRound:
             last_full_raise=last_full_raise,
             committed_when_acted=committed_when_acted,
             order=tuple(name for name in ordered if state.player(name).can_act),
+            full_order=tuple(ordered),
+            last_actor=street_actions[-1].actor if street_actions else None,
             has_history=bool(street_actions),
             last_aggressor=last_aggressor,
             last_wager=last_wager,
@@ -262,15 +275,34 @@ class BettingRound:
         since = self.current_bet - self.committed_when_acted[name]
         return since >= self.last_full_raise - _EPS
 
+    def _from_the_cursor(self) -> list[str]:
+        """Seats able to act, clockwise from whoever acted last.
+
+        Scanning from the top of the street order instead put the wrong player
+        in first after a raise. Three-handed, order BTN-SB-BB: BTN calls, SB
+        raises, and BTN owes chips again — so a scan from the top returned BTN,
+        when the action must pass to BB first. Heads-up hid it, because there
+        is only ever one candidate after the aggressor.
+        """
+
+        if not self.last_actor or self.last_actor not in self.full_order:
+            return list(self.order)
+
+        start = self.full_order.index(self.last_actor) + 1
+        rotated = self.full_order[start:] + self.full_order[:start]
+        return [name for name in rotated if name in self.order]
+
     def next_actor(self, state: "HandState") -> str | None:
         """Whose turn it is, or None if the round is closed or unknowable."""
 
         if not self.order:
             return None
 
+        candidates = self._from_the_cursor()
+
         # Owing chips always demands a response, even from a lone player whose
         # opponents are all in — they still have to call or fold.
-        for name in self.order:
+        for name in candidates:
             player = state.player(name)
             if self.current_bet - player.committed_this_street > _EPS:
                 return name
@@ -282,7 +314,7 @@ class BettingRound:
         if len(self.order) < 2:
             return None
 
-        for name in self.order:
+        for name in candidates:
             if name not in self.committed_when_acted:
                 return name
         return None

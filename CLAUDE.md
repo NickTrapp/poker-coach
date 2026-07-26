@@ -189,6 +189,11 @@ reopen the betting for players who already acted.
 - **Action order** comes from `action_order()`, which walks the seat ring.
   Preflop opens left of the big blind; later streets open at the small blind.
   Heads-up inverts the postflop order because the small blind is the button.
+  **Whose turn it is comes from `BettingRound.next_actor`, which resumes
+  clockwise from the last actor** — never rescan from the top of the order, or
+  a raise puts the wrong player in multiway. The runner and the legality check
+  must call the same function; when they each had their own copy, they shared
+  a bug and 1500 replayed hands agreed with it.
 - **Side pots** are computed in `_settle()` by walking the distinct
   contribution levels. Folded players *fund* a layer but are never eligible to
   win it. Never award the whole pot to the best hand — a short stack must not

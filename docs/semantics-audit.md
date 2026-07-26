@@ -180,3 +180,35 @@ street with one player able to act was skipped by the runner but reported
 incomplete by `is_complete`, failing 46 of 1500 hands. A round needs two players
 able to act to be a betting round at all. After the fix: **1500 hands, 2-6
 seats, mixed stacks, zero failures.**
+
+
+## Third review round — two more, both reproduced
+
+**Multiway action order broke after a raise.** `next_actor` scanned from the top
+of the street order and returned the first player owing chips. Three-handed
+(BTN, SB, BB): BTN calls, SB raises, and BTN owes again — so the scan returned
+BTN when the action must pass to BB. Heads-up hid it entirely, since there is
+only one candidate after the aggressor.
+
+Turn selection now starts clockwise from whoever acted last. Rotation does not
+change *whether* a candidate exists, only *which* one, so round completion was
+unaffected — it was purely an identity bug.
+
+The runner kept its own `acted` set and rescanned from the top after every
+action, i.e. **the identical mistake**. That is why 1500 replayed hands stayed
+green: the generator and the checker agreed with each other. `_play_street` now
+calls `next_actor` — the same function `apply(strict=True)` validates against.
+Two copies of a rule drift; one cannot.
+
+The lesson generalises past this bug. A replay suite proves self-consistency,
+not correctness. `tests/test_review_findings.py` now carries an **order oracle
+written from the rules rather than derived from the implementation**, checked
+across six seatings and all four streets.
+
+**Folded players' chips vanished from the reconstructed pot.** The commitment
+replay did `running[actor] = action.amount` for every action, but folds and
+checks carry amount 0 — so folding after calling 3 erased that 3. BTN raises 3,
+SB calls, BB raises 10, BTN folds, SB raises 30: the pot in front of SB is 16,
+reconstructed as 13, giving alpha 67.5% instead of 62.79%. Only money-in actions
+update the running commitment now, and `committed_when_acted` derives from it —
+which also stops a big blind's check zeroing its posted chip.

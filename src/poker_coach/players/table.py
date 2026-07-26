@@ -85,51 +85,27 @@ class HandResult:
 def _play_street(
     state: HandState,
     players: dict[str, Player],
-    order: list[str],
     record: list[Action],
 ) -> HandState:
     """Run one betting round to completion.
 
-    A round closes when every player who can act has acted at least once *since
-    the last aggression* and owes nothing. Re-scanning from the top of the order
-    after each action is what gives a raise its correct effect: everyone else
-    owes chips again and must act again.
+    Whose turn it is comes from :meth:`BettingRound.next_actor`, the same
+    function `apply(strict=True)` validates against. The runner used to keep
+    its own `acted` set and rescan from the top of the order after every
+    action, which put the wrong player in after a raise multiway — and because
+    the legality check had the identical flaw, the two agreed and every replay
+    test passed. Two copies of a rule drift; one cannot.
     """
 
-    # With fewer than two players able to act, there is no betting to do — the
-    # remaining cards simply run out. Recording a check here would produce a
-    # hand where someone bets into a pot nobody can contest.
-    can_act = [p for p in state.players if p.can_act]
-    someone_owes = any(state.amount_to_call(p.name) > 0 for p in can_act)
-    if len(can_act) < 2 and not someone_owes:
-        return state
-
-    acted: set[str] = set()
-
     while len(state.active_players) > 1:
-        progressed = False
+        name = state.betting_round().next_actor(state)
+        if name is None:
+            break  # round closed, or nobody left to bet into
 
-        for name in order:
-            player_state = state.player(name)
-            if not player_state.can_act:
-                continue
-            if state.amount_to_call(name) == 0 and name in acted:
-                continue
-
-            action = players[name].act(state)
-            action = action.model_copy(update={"street": state.street})
-            state = state.apply(action, strict=True)
-            record.append(action)
-            acted.add(name)
-
-            if action.type.is_aggressive:
-                acted = {name}  # everyone else owes chips again
-
-            progressed = True
-            break  # re-scan from the top so the order is respected
-
-        if not progressed:
-            break
+        action = players[name].act(state)
+        action = action.model_copy(update={"street": state.street})
+        state = state.apply(action, strict=True)
+        record.append(action)
 
     return state
 
@@ -266,8 +242,7 @@ def play_hand(
 
         actions: list[Action] = []
         if len(state.active_players) > 1 and state.players_to_act:
-            order = [by_position[p] for p in action_order(street, positions)]
-            state = _play_street(state, players, order, actions)
+            state = _play_street(state, players, actions)
 
         street_records.append(
             StreetRecord(street=street, cards=new_cards, actions=actions)
