@@ -137,6 +137,57 @@ Two provider differences the adapters absorb, so callers never see them:
 Model ids move faster than this repo does — `poker_coach.models.gemini_client.list_models()`
 shows what your key can actually reach.
 
+## Practice
+
+```bash
+poker-coach practice --hands 5 --opponent station
+poker-coach practice --opponent lag --provider gemini --seed 7
+```
+
+Play hands against an archetype; every decision you make is critiqued. Feedback
+is split by what justifies it, because those parts do not deserve equal
+confidence:
+
+```
+VERIFIED ARITHMETIC
+(Exact given the stated range assumption.)
+  Showdown equity vs the assumed range: 32.25% (400 samples, ±4.58).
+  Price: 0.5 to call into 1.5, so 25.0% equity breaks even.
+  Calling beats folding by 0.15 chips (an upper bound; it assumes the hand
+  checks down and hero realises all of its equity).
+
+EXPLOITATIVE INTERPRETATION
+(The coach's reading. Not proven, and only as good as the assumed range.)
+  ...
+
+UNRESOLVED
+(Nothing above settles these.)
+  Calling vs raising: not evaluated — no figure above compares them
+```
+
+The first and third sections need **no model at all**, which is why
+`--provider none` (the default) still teaches you something and costs nothing.
+
+**The range is configuration, not a read.** Choosing "station" tells the
+simulator how the opponent *acts*; it does not tell the coach what that
+opponent *holds* having acted. Deriving that needs a strategy model this
+package does not have, so the assumption is stated everywhere it appears:
+
+```
+Range assumption  : 22+, A2s+, K2s+, Q6s+, ...
+Conditioning      : pre-action
+Source            : fixed practice configuration, not inferred from play
+```
+
+If the coach cites a number it wasn't given, it gets one repair request quoting
+the exact failed claims. If it fails again its prose is withheld and the
+arithmetic shown alone — a noisy checker shouldn't silently delete useful
+feedback, and it shouldn't launder invented figures either.
+
+Every decision is logged to `practice/session-*.jsonl`: seed, full state, legal
+actions, your action, the facts block, every raw model response including the
+repair, the grounding verdict, resolved model id, and latency.
+
 ## Command line
 
 ```bash

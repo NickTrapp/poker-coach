@@ -22,3 +22,6 @@ runs/
 
 # macOS
 .DS_Store
+
+# Practice session transcripts
+practice/

@@ -64,6 +64,23 @@ def _build_parser() -> argparse.ArgumentParser:
     rg.add_argument("notation", help="e.g. '77+, AQs+, -55'")
     rg.add_argument("--combos", action="store_true", help="List every combo.")
 
+    pr = sub.add_parser(
+        "practice",
+        help="Play hands against an archetype and have each decision critiqued.",
+    )
+    pr.add_argument("--hands", type=int, default=5)
+    pr.add_argument("--opponent", default="station",
+                    help="nit, tag, lag, station or maniac.")
+    pr.add_argument(
+        "--provider", choices=("none", "anthropic", "gemini"), default="none",
+        help="Coach to use. 'none' shows the arithmetic only and costs nothing.",
+    )
+    pr.add_argument("--model", default=None, help="Override the model id.")
+    pr.add_argument("--seed", type=int, default=None)
+    pr.add_argument("--iterations", type=int, default=6000)
+    pr.add_argument("--log-dir", default="practice",
+                    help="Where to write the session JSONL. '' disables.")
+
     rv = sub.add_parser(
         "review",
         help="Replay a saved hand and print the facts behind each hero decision.",
@@ -144,6 +161,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(" ".join(cards_to_str(c) for c in combos))
         else:
             print(" ".join(rng_obj.classes))
+        return 0
+
+    if args.command == "practice":
+        model = None
+        if args.provider == "anthropic":
+            from .models import AnthropicModel
+
+            model = (AnthropicModel(model=args.model) if args.model
+                     else AnthropicModel())
+        elif args.provider == "gemini":
+            from .models import GeminiModel
+
+            model = (GeminiModel(model=args.model) if args.model
+                     else GeminiModel())
+
+        from .practice.cli import run_practice
+
+        run_practice(
+            hands=args.hands, opponent=args.opponent, model=model,
+            seed=args.seed, stdin=sys.stdin, stdout=sys.stdout,
+            log_dir=args.log_dir or None, iterations=args.iterations,
+        )
         return 0
 
     if args.command == "review":

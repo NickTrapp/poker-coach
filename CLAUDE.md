@@ -231,6 +231,30 @@ and assert: chips are conserved, awards sum to the pot, the history replays to
 the same pot, results are zero-sum, and nobody wins more than they could cover.
 Single-hand tests miss all of these.
 
+## Practice mode
+
+`practice/` orchestrates everything else. Two rules it must keep:
+
+- **A human is just another `Player`.** `PracticeSession` drives
+  `players.table.play_hand` with a `CallbackPlayer`; it does not re-implement a
+  betting round. Anything else reintroduces the two-copies-drift bug.
+- **The range is configuration, never inference.** `PracticeConfig.range_for()`
+  returns a `RangeAssumption` the caller set. Nothing derives what the opponent
+  holds from how the archetype behaves — that needs a strategy model this
+  package does not have. Deriving one from the policy (simulate how each combo
+  acts in the spot) is the natural next step and is *not* built.
+
+Feedback is three-way split: `verified` (deterministic arithmetic, no model),
+`interpretation` (the model's read), `unresolved` (the OPEN facts). Only the
+middle one needs a model, which is what makes the fallback honest. Never merge
+them into one block — a student reads undifferentiated prose with uniform
+confidence, which is the failure this project guards against on the model side.
+
+Grounding failure does **not** block. One repair request quoting the failed
+claims, then withhold the prose and show the arithmetic with a warning. The
+checker matches magnitudes, not meanings, so it is noisy in both directions and
+must not be load-bearing.
+
 ## Not yet built
 
 `knowledge/` and `solver/` are documented stubs. Each docstring states the
