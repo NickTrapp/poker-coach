@@ -198,7 +198,7 @@ def test_illegal_recorded_action_surfaces_on_replay():
             )
         ]
     )
-    with pytest.raises(ValueError, match="cannot check"):
+    with pytest.raises(ValueError, match="may not check here"):
         history.final_state()
 
 

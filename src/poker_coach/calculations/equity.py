@@ -249,22 +249,8 @@ def _simulate(
     completed = 0
 
     for _ in range(iterations):
-        dead = set(base_dead)
-        villain_hands: list[Combo] = []
-        ok = True
-
-        for pool in pools:
-            if isinstance(pool, tuple):
-                villain_hands.append(pool)
-                continue
-            hand = _draw_combo(pool, dead, rng)
-            if hand is None:
-                ok = False
-                break
-            dead.update(hand)
-            villain_hands.append(hand)
-
-        if not ok:
+        dead, villain_hands = _draw_joint(pools, base_dead, rng)
+        if villain_hands is None:
             continue
 
         deck = [c for c in remaining_deck(sorted(dead, key=str))]
@@ -295,6 +281,57 @@ def _simulate(
         samples=completed,
         exact=False,
     )
+
+
+#: Joint re-draws attempted before giving up on one iteration.
+_JOINT_ATTEMPTS = 40
+
+
+def _draw_joint(
+    pools: Sequence[list[Combo] | Combo],
+    base_dead: set[Card],
+    rng: random.Random,
+) -> tuple[set[Card], list[Combo] | None]:
+    """Draw one combo per opponent, uniformly over *joint* assignments.
+
+    Each opponent is drawn independently from its own full pool and the whole
+    deal is rejected if any two collide. That matters: drawing opponents in
+    sequence and conditioning each on the previous ones is **not** uniform over
+    legal joint assignments — it over-weights assignments in which the earlier
+    opponent blocks more of the later opponent's range, and makes the answer
+    depend on the order the ranges were supplied.
+
+    With ``opp1 ∈ {AsKs, 2c3c}`` and ``opp2 ∈ {AsQs, AsJs, 2c4c}`` there are
+    three legal joint assignments. Sequential sampling gives the first a
+    probability of 1/2; uniform gives 1/3. Measured on the old implementation
+    it was 0.496.
+
+    Every legal assignment here has probability ``∏ 1/|pool_i|`` before
+    rejection, so conditioning on acceptance leaves them uniform.
+    """
+
+    for _ in range(_JOINT_ATTEMPTS):
+        dead = set(base_dead)
+        hands: list[Combo] = []
+        ok = True
+
+        for pool in pools:
+            if isinstance(pool, tuple):
+                # A pinned combo is already in `base_dead`, so it would always
+                # "collide" with itself. Nothing to draw and nothing to reject.
+                hands.append(pool)
+                continue
+            combo = pool[rng.randrange(len(pool))]
+            if combo[0] in dead or combo[1] in dead:
+                ok = False
+                break
+            dead.update(combo)
+            hands.append(combo)
+
+        if ok:
+            return dead, hands
+
+    return set(base_dead), None
 
 
 def _draw_combo(

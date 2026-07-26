@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from ..calculations.hand_eval import HandRank, evaluate
 from ..domain.action import Action
 from ..domain.cards import Card, Deck
+from ..domain.betting import action_order
 from ..domain.enums import Position, Street
 from ..domain.history import HandHistory, SeatRecord, StreetRecord
 from ..domain.state import HandState
@@ -38,20 +39,6 @@ __all__ = ["Seat", "HandResult", "play_hand", "MAX_SEATS"]
 MAX_SEATS = 9
 
 _STREET_DEAL = {Street.FLOP: 3, Street.TURN: 1, Street.RIVER: 1}
-
-#: Physical seating order, clockwise from the small blind.
-_RING: tuple[Position, ...] = (
-    Position.SB,
-    Position.BB,
-    Position.UTG,
-    Position.UTG1,
-    Position.MP,
-    Position.LJ,
-    Position.HJ,
-    Position.CO,
-    Position.BTN,
-)
-
 
 @dataclass(frozen=True, slots=True)
 class Seat:
@@ -95,68 +82,30 @@ class HandResult:
         return f"{who} wins {self.pot:g} ({how})"
 
 
-def action_order(street: Street, positions: set[Position]) -> list[Position]:
-    """Seats in the order they act on ``street``.
-
-    Preflop opens to the left of the big blind and the blinds close. Later
-    streets open at the small blind and the button closes. Heads-up inverts the
-    postflop order, because there the small blind *is* the button.
-    """
-
-    ring = [p for p in _RING if p in positions]
-    if not ring:
-        raise ValueError("no known positions at the table")
-
-    if street is Street.PREFLOP:
-        pivot = ring.index(Position.BB)
-        return ring[pivot + 1 :] + ring[: pivot + 1]
-
-    if len(ring) == 2:
-        return [Position.BB, Position.SB]
-
-    return ring
-
-
 def _play_street(
     state: HandState,
     players: dict[str, Player],
-    order: list[str],
     record: list[Action],
 ) -> HandState:
     """Run one betting round to completion.
 
-    A round closes when every player who can act has acted at least once *since
-    the last aggression* and owes nothing. Re-scanning from the top of the order
-    after each action is what gives a raise its correct effect: everyone else
-    owes chips again and must act again.
+    Whose turn it is comes from :meth:`BettingRound.next_actor`, the same
+    function `apply(strict=True)` validates against. The runner used to keep
+    its own `acted` set and rescan from the top of the order after every
+    action, which put the wrong player in after a raise multiway — and because
+    the legality check had the identical flaw, the two agreed and every replay
+    test passed. Two copies of a rule drift; one cannot.
     """
 
-    acted: set[str] = set()
-
     while len(state.active_players) > 1:
-        progressed = False
+        name = state.betting_round().next_actor(state)
+        if name is None:
+            break  # round closed, or nobody left to bet into
 
-        for name in order:
-            player_state = state.player(name)
-            if not player_state.can_act:
-                continue
-            if state.amount_to_call(name) == 0 and name in acted:
-                continue
-
-            action = players[name].act(state)
-            action = action.model_copy(update={"street": state.street})
-            state = state.apply(action)
-            record.append(action)
-            acted.add(name)
-
-            if action.type.is_aggressive:
-                acted = {name}  # everyone else owes chips again
-
-            progressed = True
-            break  # re-scan from the top so the order is respected
-
-        if not progressed:
-            break
+        action = players[name].act(state)
+        action = action.model_copy(update={"street": state.street})
+        state = state.apply(action, strict=True)
+        record.append(action)
 
     return state
 
@@ -293,8 +242,7 @@ def play_hand(
 
         actions: list[Action] = []
         if len(state.active_players) > 1 and state.players_to_act:
-            order = [by_position[p] for p in action_order(street, positions)]
-            state = _play_street(state, players, order, actions)
+            state = _play_street(state, players, actions)
 
         street_records.append(
             StreetRecord(street=street, cards=new_cards, actions=actions)

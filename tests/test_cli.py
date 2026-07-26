@@ -78,7 +78,10 @@ def test_review_marks_hero_actions(capsys):
     main(["review", EXAMPLE, "--replay"])
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "]" in ln]
     hero_lines = [ln for ln in lines if ln.startswith("*")]
-    assert len(hero_lines) == 6
+    # raise, call (preflop), call (flop), fold (turn). The two leading hero
+    # checks this example used to carry were out of turn: heads-up the big
+    # blind acts first from the flop on.
+    assert len(hero_lines) == 4
     assert all("hero" in ln for ln in hero_lines)
 
 

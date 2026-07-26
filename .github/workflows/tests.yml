@@ -1,0 +1,133 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The default job installs NO optional extras. That is the point: the
+  # deterministic layers, the CLI and the whole suite must work without either
+  # provider SDK, and a green run here is the proof.
+  tests:
+    name: tests (no provider SDKs)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (dev extras only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Assert neither provider SDK is installed
+        run: |
+          python - <<'PY'
+          import importlib.util, sys
+
+          def installed(name: str) -> bool:
+              # find_spec RAISES rather than returning None when a parent
+              # package is absent, so "google.genai" explodes on a clean box.
+              try:
+                  return importlib.util.find_spec(name) is not None
+              except ModuleNotFoundError:
+                  return False
+
+          present = [n for n in ("anthropic", "google.genai") if installed(n)]
+          if present:
+              sys.exit(f"optional SDKs leaked into the base install: {present}")
+          print("confirmed: no provider SDK installed")
+          PY
+
+      - name: Import the package without any SDK
+        run: |
+          python -c "
+          import poker_coach
+          from poker_coach.models import AnthropicModel, GeminiModel
+          print('imports fine without either SDK:', poker_coach.__version__)
+          "
+
+      - name: Run the test suite
+        run: pytest -q
+
+  # A second install *with* both SDKs, so the client tests actually execute
+  # instead of skipping. The Gemini request-shape tests build real
+  # google.genai types, so an SDK change fails here rather than in production.
+  tests-with-providers:
+    name: tests (with provider SDKs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (all extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,anthropic,gemini]"
+
+      - name: Run the test suite
+        run: pytest -q
+
+      - name: Confirm the provider tests ran rather than skipped
+        run: pytest tests/models -q --no-header -rs
+
+  # The two ground-truth checks the unit suite is too slow to carry. They are
+  # what establish that the evaluator and sampler are correct rather than
+  # merely self-consistent.
+  verify-math:
+    name: ground-truth math
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (dev extras only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Enumerate all 2,598,960 hands and check the sampler
+        run: python scripts/verify_math.py
+
+  # Simulated play only breaks in volume — the last two rounds of bugs were
+  # found at 1200+ hands, not by any single-hand test.
+  simulated-hands:
+    name: simulated hands (volume)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (dev extras only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Play 600 hands across 2-6 seats with mixed stacks
+        run: python scripts/stress_hands.py --hands 600

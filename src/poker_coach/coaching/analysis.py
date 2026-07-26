@@ -204,7 +204,13 @@ def _is_terminal_call(state: HandState, hero: str, to_call: float) -> bool:
         for p in state.active_players
         if p.name != hero
     ]
-    return hero_left <= 1e-9 or (bool(others_left) and min(others_left) <= 1e-9)
+    # `all`, not `any`: one opponent being all-in does not end the betting if
+    # another still has chips behind. Using `min(...) <= 0` marked a call
+    # terminal — and so promoted its EV to "exact" — whenever *any* opponent
+    # was all-in, even with live money still to act.
+    return hero_left <= 1e-9 or (
+        bool(others_left) and all(stack <= 1e-9 for stack in others_left)
+    )
 
 
 def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
@@ -488,6 +494,32 @@ def analyze(
     if player.hole_cards is None:
         raise ValueError(f"{player.name} has no hole cards to analyse")
 
+    if player.has_folded:
+        raise ValueError(
+            f"{player.name} has folded; there is no decision left to analyse"
+        )
+
+    active = len(state.active_players)
+    if active < 2:
+        raise ValueError(
+            f"the hand is over: {active} player(s) still active, so there is "
+            "no opponent to hold a range"
+        )
+    if active > 2:
+        # Refusing beats answering wrongly. One `villain_range` against a
+        # three-way pot produces a heads-up equity figure sitting beside a
+        # multiway pot and a table-wide effective stack — each number correct
+        # in isolation, together describing a spot that does not exist.
+        # Multiway needs one range per opponent, which is a real modelling
+        # decision (position and action order imply different ranges), not a
+        # default this function may invent.
+        raise NotImplementedError(
+            f"multiway analysis is not supported: {active} players are still "
+            "active, and a single villain_range cannot describe them. "
+            "Analyse a heads-up spot, or supply one range per opponent once "
+            "that API exists."
+        )
+
     rng_obj = rng or random.Random()
 
     if isinstance(villain_range, RangeAssumption):
@@ -521,10 +553,27 @@ def analyze(
 
     mdf = alpha = implied_needed = None
     if to_call > 0:
-        # MDF and alpha are defined against the pot *before* villain's bet.
-        pot_before_bet = max(0.0, total_pot - to_call)
-        mdf = minimum_defence_frequency(pot_before_bet, to_call)
-        alpha = bluff_success_threshold(pot_before_bet, to_call)
+        # MDF and alpha are defined by what the AGGRESSOR *added* and the pot
+        # they were trying to win — not by hero's call, and not by their whole
+        # street commitment either.
+        #
+        # A small blind raising to 3 has already posted 0.5, so it risked 2.5
+        # to win the 1.5 in front of it: alpha is 62.5%, not the 75% that the
+        # full commitment implies. Blinds, three-bets and postflop re-raises
+        # all separate the two.
+        #
+        # When the increment cannot be recovered — a state with no recorded
+        # aggression, where the blinds make any inference unsound — nothing is
+        # reported. A plausible-but-possibly-false frequency is worse than a
+        # missing one.
+        betting = state.betting_round()
+        if betting.last_wager is not None and betting.pot_before_aggression is not None:
+            mdf = minimum_defence_frequency(
+                betting.pot_before_aggression, betting.last_wager
+            )
+            alpha = bluff_success_threshold(
+                betting.pot_before_aggression, betting.last_wager
+            )
 
         # Only meaningful while chips can still change hands.
         terminal = _is_terminal_call(state, player.name, to_call)

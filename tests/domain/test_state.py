@@ -79,7 +79,7 @@ def test_call_must_match_the_current_bet_exactly():
     state = make_state().apply(
         Action(actor="hero", type=ActionType.RAISE, amount=3.0)
     )
-    with pytest.raises(ValueError, match="call must bring"):
+    with pytest.raises(ValueError, match="not a legal size"):
         state.apply(Action(actor="villain", type=ActionType.CALL, amount=2.0))
 
     called = state.apply(Action(actor="villain", type=ActionType.CALL, amount=3.0))
@@ -90,13 +90,13 @@ def test_cannot_check_facing_a_bet():
     state = make_state().apply(
         Action(actor="hero", type=ActionType.RAISE, amount=3.0)
     )
-    with pytest.raises(ValueError, match="cannot check"):
+    with pytest.raises(ValueError, match="may not check here"):
         state.apply(Action(actor="villain", type=ActionType.CHECK))
 
 
 def test_cannot_bet_when_facing_a_bet():
     state = make_state()
-    with pytest.raises(ValueError, match="use raise"):
+    with pytest.raises(ValueError, match="may not bet here"):
         state.apply(Action(actor="hero", type=ActionType.BET, amount=3.0))
 
 
@@ -104,13 +104,15 @@ def test_raise_must_exceed_the_current_bet():
     state = make_state().apply(
         Action(actor="hero", type=ActionType.RAISE, amount=5.0)
     )
-    with pytest.raises(ValueError, match="does not exceed"):
+    # Rejected by the minimum-raise rule, which now fires first and says why:
+    # over a bet of 5 raised from 1, the next raise must reach 9.
+    with pytest.raises(ValueError, match="not a legal size"):
         state.apply(Action(actor="villain", type=ActionType.RAISE, amount=4.0))
 
 
 def test_cannot_exceed_stack():
     state = make_state()
-    with pytest.raises(ValueError, match="cannot put in"):
+    with pytest.raises(ValueError, match="not a legal size"):
         state.apply(Action(actor="hero", type=ActionType.RAISE, amount=500.0))
 
 

@@ -7,13 +7,16 @@ hold onto every intermediate node of a hand for explanation and replay.
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .action import Action
 from .cards import Card
 from .enums import ActionType, Position, Street
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .betting import BettingRound, LegalAction
 
 __all__ = ["PlayerState", "HandState"]
 
@@ -190,8 +193,30 @@ class HandState(BaseModel):
 
     # ------------------------------------------------------------ transitions
 
-    def apply(self, action: Action) -> "HandState":
-        """Return a new state with ``action`` applied. Raises on illegal actions."""
+    def betting_round(self) -> "BettingRound":
+        """The current street's betting state, derived fresh from this state."""
+
+        from .betting import BettingRound
+
+        return BettingRound.from_state(self)
+
+    def legal_actions(self, name: str) -> list["LegalAction"]:
+        """Every action ``name`` may legally take right now.
+
+        The source of truth for legality: anything not listed here is rejected
+        by :meth:`apply`.
+        """
+
+        return self.betting_round().legal_actions(self, name)
+
+    def apply(self, action: Action, *, strict: bool = False) -> "HandState":
+        """Return a new state with ``action`` applied. Raises on illegal actions.
+
+        ``strict`` additionally enforces turn order and raise-reopening, which
+        need the street's action history to evaluate. Replay and simulated play
+        pass it; directly-constructed states generally cannot. See
+        :mod:`poker_coach.domain.betting`.
+        """
 
         state = self.model_copy(deep=True)
         player = state.player(action.actor)
@@ -200,6 +225,8 @@ class HandState(BaseModel):
             raise ValueError(f"{player.name} has already folded")
         if player.is_all_in:
             raise ValueError(f"{player.name} is all-in and cannot act")
+
+        state.betting_round().validate(state, action, strict=strict)
 
         if action.type is ActionType.FOLD:
             player.has_folded = True
@@ -245,11 +272,16 @@ class HandState(BaseModel):
                     f"call must bring {player.name} to {max_call:g}, got {target:g}"
                 )
 
-        player.stack -= added
+        # Clamp before assigning, not after: `validate_assignment` rejects a
+        # negative stack the moment it is set, and repeated float subtraction
+        # lands on values like -7.1e-15 when a player commits their last chip.
+        remaining = player.stack - added
+        if remaining <= 1e-9:
+            remaining = 0.0
+        player.stack = remaining
         player.committed_this_street = target
         player.committed_total += added
-        if player.stack <= 1e-9:
-            player.stack = 0.0
+        if remaining == 0.0:
             player.is_all_in = True
 
     def advance_street(self, new_cards: Sequence[Card] = ()) -> "HandState":
@@ -257,6 +289,37 @@ class HandState(BaseModel):
 
         if self.street is Street.SHOWDOWN:
             raise ValueError("the hand is already at showdown")
+
+        # A street cannot end before its betting round closes.
+        #
+        # "Nobody owes chips" is necessary but not sufficient: on an unbet
+        # street nobody owes anything before a single player has acted, so
+        # checking only for unmatched bets let a flop advance to the turn with
+        # no action at all, or after one player of two had checked.
+        #
+        # Completion needs the street's action history to know who has acted.
+        # Where that history exists it is enforced; where it cannot exist —
+        # a directly-built state — only the unmatched-bet check applies. Same
+        # tier rule as turn order, and `has_history` says which applies.
+        betting = self.betting_round()
+        unmatched = betting.unmatched(self)
+        if unmatched:
+            raise ValueError(
+                f"cannot leave {self.street.value}: "
+                f"{', '.join(unmatched)} have not matched the bet of "
+                f"{self.current_bet:g}"
+            )
+        # `self.actions` covers the whole hand, not just this street — a state
+        # mid-hand carries earlier streets' actions even on a fresh board, so a
+        # flop that advances with no action recorded is still caught. Only a
+        # wholly synthetic state, with no action anywhere, escapes.
+        tracked = bool(self.actions)
+        if tracked and not betting.is_complete(self):
+            waiting = betting.next_actor(self)
+            raise ValueError(
+                f"cannot leave {self.street.value}: the betting round is not "
+                f"complete, {waiting} has yet to act"
+            )
 
         next_street = self.street.next()
         board = [*self.board, *new_cards]
