@@ -290,15 +290,35 @@ class HandState(BaseModel):
         if self.street is Street.SHOWDOWN:
             raise ValueError("the hand is already at showdown")
 
-        # A street cannot end with money owed. This was accepted before, so a
-        # history could carry an unmatched bet forward into the next street and
-        # replay without complaint.
-        unmatched = self.betting_round().unmatched(self)
+        # A street cannot end before its betting round closes.
+        #
+        # "Nobody owes chips" is necessary but not sufficient: on an unbet
+        # street nobody owes anything before a single player has acted, so
+        # checking only for unmatched bets let a flop advance to the turn with
+        # no action at all, or after one player of two had checked.
+        #
+        # Completion needs the street's action history to know who has acted.
+        # Where that history exists it is enforced; where it cannot exist —
+        # a directly-built state — only the unmatched-bet check applies. Same
+        # tier rule as turn order, and `has_history` says which applies.
+        betting = self.betting_round()
+        unmatched = betting.unmatched(self)
         if unmatched:
             raise ValueError(
                 f"cannot leave {self.street.value}: "
                 f"{', '.join(unmatched)} have not matched the bet of "
                 f"{self.current_bet:g}"
+            )
+        # `self.actions` covers the whole hand, not just this street — a state
+        # mid-hand carries earlier streets' actions even on a fresh board, so a
+        # flop that advances with no action recorded is still caught. Only a
+        # wholly synthetic state, with no action anywhere, escapes.
+        tracked = bool(self.actions)
+        if tracked and not betting.is_complete(self):
+            waiting = betting.next_actor(self)
+            raise ValueError(
+                f"cannot leave {self.street.value}: the betting round is not "
+                f"complete, {waiting} has yet to act"
             )
 
         next_street = self.street.next()

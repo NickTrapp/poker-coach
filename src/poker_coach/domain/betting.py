@@ -89,6 +89,46 @@ def action_order(street: Street, positions: set[Position]) -> list[Position]:
     return ring[pivot + 1 :] + ring[: pivot + 1]
 
 
+def _street_start_commitments(state: "HandState") -> dict[str, float]:
+    """What each player had committed when this street began.
+
+    Zero everywhere except preflop, where the blinds are already posted.
+    Antes are dead money and live in ``state.pot``, not here.
+    """
+
+    if state.street is not Street.PREFLOP:
+        return {p.name: 0.0 for p in state.players}
+
+    start: dict[str, float] = {}
+    for player in state.players:
+        if player.position is Position.SB:
+            start[player.name] = min(state.small_blind, player.committed_this_street)
+        elif player.position is Position.BB:
+            start[player.name] = min(state.big_blind, player.committed_this_street)
+        else:
+            start[player.name] = 0.0
+    return start
+
+
+def _infer_lone_bet(state: "HandState") -> tuple[str, float, float] | None:
+    """Recover a single postflop bet from state alone, or None.
+
+    Only sound when exactly one player has money in on a street where nobody
+    started with any — otherwise the increment is unknowable and MDF should be
+    withheld rather than guessed.
+    """
+
+    if state.street is Street.PREFLOP or state.current_bet <= _EPS:
+        return None
+
+    live = [p for p in state.players if p.committed_this_street > _EPS]
+    if len(live) != 1:
+        return None
+
+    bettor = live[0]
+    return bettor.name, bettor.committed_this_street, state.pot
+
+
 @dataclass(frozen=True, slots=True)
 class LegalAction:
     """One action a player may legally take, with its permitted sizing.
@@ -130,6 +170,12 @@ class BettingRound:
     order: tuple[str, ...] = ()
     #: True when the history was available to derive turn-dependent facts.
     has_history: bool = False
+    #: Chips the last aggressor *added* on their aggressive action, and the pot
+    #: as it stood immediately before it. Both None when no aggressive action
+    #: can be identified. These, not hero's call, define MDF and alpha.
+    last_aggressor: str | None = None
+    last_wager: float | None = None
+    pot_before_aggression: float | None = None
 
     # ------------------------------------------------------------ derivation
 
@@ -150,13 +196,38 @@ class BettingRound:
         last_full_raise = state.big_blind
         previous_level = 0.0 if state.street is not Street.PREFLOP else state.big_blind
 
+        # Replay the street's commitments so the last aggressor's *increment*
+        # can be recovered. Their whole street commitment is not what they
+        # risked: a small blind raising to 3 has already posted 0.5, so it
+        # added 2.5 — and blinds, three-bets and postflop re-raises all break
+        # the two apart.
+        running = _street_start_commitments(state)
+        last_aggressor: str | None = None
+        last_wager: float | None = None
+        pot_before: float | None = None
+
         for action in street_actions:
             if action.type.is_aggressive:
                 increment = action.amount - previous_level
                 if increment >= last_full_raise - _EPS:
                     last_full_raise = increment
                 previous_level = action.amount
+
+                last_aggressor = action.actor
+                last_wager = action.amount - running.get(action.actor, 0.0)
+                pot_before = state.pot + sum(running.values())
+
+            running[action.actor] = action.amount
             committed_when_acted[action.actor] = action.amount
+
+        if last_aggressor is None:
+            # No recorded aggression. Postflop a single live bet is
+            # unambiguous — nobody carries a commitment into a new street, so
+            # the bettor's increment is their whole commitment. Preflop the
+            # blinds make that inference false, so nothing is claimed.
+            inferred = _infer_lone_bet(state)
+            if inferred is not None:
+                last_aggressor, last_wager, pot_before = inferred
 
         return cls(
             street=state.street,
@@ -166,6 +237,9 @@ class BettingRound:
             committed_when_acted=committed_when_acted,
             order=tuple(name for name in ordered if state.player(name).can_act),
             has_history=bool(street_actions),
+            last_aggressor=last_aggressor,
+            last_wager=last_wager,
+            pot_before_aggression=pot_before,
         )
 
     # ------------------------------------------------------------- accessors
@@ -193,11 +267,23 @@ class BettingRound:
 
         if not self.order:
             return None
+
+        # Owing chips always demands a response, even from a lone player whose
+        # opponents are all in — they still have to call or fold.
         for name in self.order:
             player = state.player(name)
-            owes = self.current_bet - player.committed_this_street > _EPS
-            acted = name in self.committed_when_acted
-            if owes or not acted:
+            if self.current_bet - player.committed_this_street > _EPS:
+                return name
+
+        # Nobody owes anything. A player yet to act only matters if there is
+        # somebody to bet into: with fewer than two able to act, there is no
+        # betting round to finish and a check would be recorded into a pot
+        # nobody can contest.
+        if len(self.order) < 2:
+            return None
+
+        for name in self.order:
+            if name not in self.committed_when_acted:
                 return name
         return None
 
@@ -229,8 +315,12 @@ class BettingRound:
         ceiling = player.committed_this_street + player.stack
         out: list[LegalAction] = []
 
+        # Folding is legal whenever it is your turn — including when you could
+        # check for free. It is a terrible action there, not an illegal one,
+        # and hand histories do record it.
+        out.append(LegalAction(ActionType.FOLD))
+
         if owed > _EPS:
-            out.append(LegalAction(ActionType.FOLD))
             out.append(
                 LegalAction(
                     ActionType.CALL,
@@ -240,6 +330,12 @@ class BettingRound:
             )
         else:
             out.append(LegalAction(ActionType.CHECK))
+
+        # Aggression needs someone able to answer it. With every opponent
+        # all-in there is no live money to win, so a bet would build a side pot
+        # nobody can contest — chip-conserving, but not a legal hand.
+        if not self._has_a_live_opponent(state, name):
+            return out
 
         # A bet opens an unbet pot; a raise answers a live one.
         if self.current_bet <= _EPS:
@@ -261,6 +357,10 @@ class BettingRound:
             )
 
         return out
+
+    @staticmethod
+    def _has_a_live_opponent(state: "HandState", name: str) -> bool:
+        return any(p.can_act for p in state.active_players if p.name != name)
 
     # ------------------------------------------------------------ validation
 
@@ -289,26 +389,24 @@ class BettingRound:
                     f"it is {expected}'s turn to act, not {action.actor}'s"
                 )
 
-        if action.type is not ActionType.RAISE:
-            return
+        # Validate against the listed options rather than re-deriving legality
+        # here. Duplicated rules drift: the earlier version returned early for
+        # every non-raise, and returned early again for any all-in raise —
+        # which let a player shove after an under-raise that never reopened
+        # the betting, an action `legal_actions` had already excluded.
+        options = self.legal_actions(state, action.actor)
+        matching = [option for option in options if option.type is action.type]
 
-        ceiling = player.committed_this_street + player.stack
-        is_all_in = abs(action.amount - ceiling) <= _EPS
-        if is_all_in:
-            return  # a player may always move all-in
-
-        minimum = self.min_raise_to(player.committed_this_street, player.stack)
-        if action.amount < minimum - _EPS:
+        if not matching:
+            offered = ", ".join(sorted(o.type.value for o in options)) or "nothing"
             raise ValueError(
-                f"raise to {action.amount:g} is below the minimum of "
-                f"{minimum:g} (current bet {self.current_bet:g}, last full "
-                f"raise {self.last_full_raise:g})"
+                f"{action.actor} may not {action.type.value} here; "
+                f"legal actions are: {offered}"
             )
 
-        if strict and not self.raising_is_reopened_for(
-            action.actor, player.committed_this_street
-        ):
+        if not any(option.permits(action.amount) for option in matching):
+            allowed = "; ".join(str(option) for option in matching)
             raise ValueError(
-                f"{action.actor} may not re-raise: the action was not reopened "
-                "by a full raise since they last acted"
+                f"{action.type.value} to {action.amount:g} is not a legal size; "
+                f"allowed: {allowed}"
             )

@@ -494,7 +494,17 @@ def analyze(
     if player.hole_cards is None:
         raise ValueError(f"{player.name} has no hole cards to analyse")
 
+    if player.has_folded:
+        raise ValueError(
+            f"{player.name} has folded; there is no decision left to analyse"
+        )
+
     active = len(state.active_players)
+    if active < 2:
+        raise ValueError(
+            f"the hand is over: {active} player(s) still active, so there is "
+            "no opponent to hold a range"
+        )
     if active > 2:
         # Refusing beats answering wrongly. One `villain_range` against a
         # three-way pot produces a heads-up equity figure sitting beside a
@@ -543,33 +553,27 @@ def analyze(
 
     mdf = alpha = implied_needed = None
     if to_call > 0:
-        # MDF and alpha are defined by what the AGGRESSOR risked and the pot
-        # they were trying to win — not by what hero must call.
+        # MDF and alpha are defined by what the AGGRESSOR *added* and the pot
+        # they were trying to win — not by hero's call, and not by their whole
+        # street commitment either.
         #
-        # Those coincide for a bet into an unopened pot and diverge for a
-        # raise. Pot 10, hero bets 5, villain raises to 15: hero faces 10, but
-        # villain risked 15 to win the 15 already out there. Using hero's
-        # to_call gave alpha 33.3% where the true figure is 50%.
+        # A small blind raising to 3 has already posted 0.5, so it risked 2.5
+        # to win the 1.5 in front of it: alpha is 62.5%, not the 75% that the
+        # full commitment implies. Blinds, three-bets and postflop re-raises
+        # all separate the two.
         #
-        # The aggressor's wager is their whole street commitment, so the pot
-        # before their action is the current pot minus it.
-        wager = state.current_bet
-        pot_before_action = max(0.0, total_pot - wager)
-        # Postflop there are no blinds, so any live bet was chosen. Preflop we
-        # need either a recorded raise or a bet above the big blind, since a
-        # posted blind is not a wager anyone decided to make.
-        if state.street is Street.PREFLOP:
-            voluntary = state.current_bet > state.big_blind or any(
-                action.type.is_aggressive and action.street is Street.PREFLOP
-                for action in state.actions
+        # When the increment cannot be recovered — a state with no recorded
+        # aggression, where the blinds make any inference unsound — nothing is
+        # reported. A plausible-but-possibly-false frequency is worse than a
+        # missing one.
+        betting = state.betting_round()
+        if betting.last_wager is not None and betting.pot_before_aggression is not None:
+            mdf = minimum_defence_frequency(
+                betting.pot_before_aggression, betting.last_wager
             )
-        else:
-            voluntary = True
-        if voluntary:
-            mdf = minimum_defence_frequency(pot_before_action, wager)
-            alpha = bluff_success_threshold(pot_before_action, wager)
-        # Otherwise the only "bet" is a posted blind, which nobody chose to
-        # make; a bluffing frequency for it would be meaningless.
+            alpha = bluff_success_threshold(
+                betting.pot_before_aggression, betting.last_wager
+            )
 
         # Only meaningful while chips can still change hands.
         terminal = _is_terminal_call(state, player.name, to_call)

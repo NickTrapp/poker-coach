@@ -96,6 +96,14 @@ def _play_street(
     owes chips again and must act again.
     """
 
+    # With fewer than two players able to act, there is no betting to do — the
+    # remaining cards simply run out. Recording a check here would produce a
+    # hand where someone bets into a pot nobody can contest.
+    can_act = [p for p in state.players if p.can_act]
+    someone_owes = any(state.amount_to_call(p.name) > 0 for p in can_act)
+    if len(can_act) < 2 and not someone_owes:
+        return state
+
     acted: set[str] = set()
 
     while len(state.active_players) > 1:

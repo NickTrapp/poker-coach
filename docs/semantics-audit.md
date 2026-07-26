@@ -138,3 +138,45 @@ After both: 1200 hands, zero failures, every emitted history replaying strictly.
 **Grounding semantics (6).** Needs fact ids and units, model citations like
 `[hero_equity_pct]`, and validation of the citation rather than the digits —
 a change to how responses are produced, not a patch to the checker.
+
+
+## Second review round — five more, all reproduced
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | `legal_actions()` was not actually the source of truth | fixed |
+| 2 | Round completion never enforced (only unmatched bets) | fixed |
+| 3 | MDF used the aggressor's total commitment, not their increment | fixed |
+| 4 | Betting allowed into a pot no opponent could contest | fixed |
+| 5 | `analyze()` accepted a folded hero and a finished hand | fixed |
+
+**(1)** `validate()` returned early for every non-raise, and again for any
+all-in raise — so a shove was accepted after an under-raise that never reopened
+the betting, an action `legal_actions()` had already excluded. It now validates
+against the listed options instead of a parallel set of hand-written checks.
+That also closed sub-minimum bets, `RAISE` into an unopened pot, and
+`POST_BLIND` mid-street. Writing it this way surfaced a bug of the opposite
+kind: folding was not offered when checking was free, though folding is legal
+whenever it is your turn.
+
+**(2)** `unmatched()` is empty on an unbet street before anyone acts, so a flop
+could advance to the turn with no action, or after one player of two had
+checked. `advance_street` now requires `is_complete()` whenever the hand
+carries any recorded action — `state.actions` spans the whole hand, so a fresh
+street mid-hand is still covered; only a wholly synthetic state escapes.
+
+**(3)** The wager is what the aggressor *added*, not their street total. A small
+blind raising to 3 has posted 0.5, so it risked 2.5 to win 1.5: alpha 62.5%,
+where the full commitment gave 75%. `BettingRound` now replays the street's
+commitments to recover the increment and the pot before it. Where no aggression
+is recorded and the blinds make inference unsound, MDF and alpha are withheld
+rather than guessed.
+
+**(4)** Aggression now requires an opponent who can still act, and a street with
+fewer than two such players runs out without recording a check.
+
+Enabling (2) then exposed an inconsistency between the runner and the rules: a
+street with one player able to act was skipped by the runner but reported
+incomplete by `is_complete`, failing 46 of 1500 hands. A round needs two players
+able to act to be a betting round at all. After the fix: **1500 hands, 2-6
+seats, mixed stacks, zero failures.**

@@ -205,10 +205,19 @@ class RuleBasedPlayer:
     # ----------------------------------------------------------------- sizes
 
     def _bet_size(self, state: HandState) -> float | None:
+        """A pot-fraction bet, floored at one big blind and capped by the stack.
+
+        A fraction of a small pot can land below the minimum bet — 0.66 of a
+        1.2-chip pot is 0.79, under a 1-chip blind — which the rules engine
+        rejects. Clamp up to the floor, then down to the stack, so a short
+        stack still goes all-in rather than proposing something illegal.
+        """
+
         player = state.player(self.name)
+        if player.stack <= 0:
+            return None
         wanted = self.style.bet_fraction * state.total_pot
-        size = min(wanted, player.stack)
-        return size if size > 0 else None
+        return min(max(wanted, state.big_blind), player.stack)
 
     def _raise_target(self, state: HandState) -> float | None:
         """A pot-sized raise, capped by the stack. None if a raise is illegal."""
