@@ -138,10 +138,15 @@ def test_percentages_whose_digits_look_like_ranks_survive_masking(text):
     assert claims[0].text == text
 
 
-def test_a_bare_repeated_rank_reads_as_a_pocket_pair():
+@pytest.mark.parametrize(
+    "text",
+    ["lower sets (`77`, `22`)", "Villain holds 77 here.",
+     "pocket 22 is behind", "a set of 99 is ahead"],
+)
+def test_a_marked_repeated_rank_reads_as_a_pocket_pair(text):
     """A live run flagged "lower sets (`77`, `22`)" as invented numbers."""
 
-    assert extract_claims("Villain holds 77 and 22 here.") == []
+    assert extract_claims(text) == []
 
 
 def test_a_repeated_rank_with_a_percent_sign_is_still_a_statistic():
@@ -151,18 +156,23 @@ def test_a_repeated_rank_with_a_percent_sign_is_still_a_statistic():
     assert [c.text for c in claims] == ["88%"]
 
 
-def test_the_pocket_pair_trade_off_is_stated():
-    # Cost of the above: a quoted amount that happens to be a repeated rank
-    # goes unchecked. Eight values, documented rather than hidden.
-    assert extract_claims("The pot is 77 now.") == []
-    assert [c.value for c in extract_claims("The pot is 76 now.")] == [76.0]
+@pytest.mark.parametrize(
+    "text,value",
+    [("The pot is 77 now.", 77.0), ("You must call 44 chips.", 44.0),
+     ("The pot is 76 now.", 76.0)],
+)
+def test_an_unmarked_repeated_rank_is_still_an_amount(text, value):
+    """Masking every bare 22-99 would blind the checker to eight common
+    pot, stack and raise sizes — on a checker that already ignores 0-10."""
+
+    assert [c.value for c in extract_claims(text)] == [value]
 
 
-def test_known_notation_also_covers_bare_digit_ranges():
-    # Both routes now clear it: the repeated-rank pattern, and the spot's own
-    # range string masked literally.
+def test_known_notation_covers_an_unmarked_range_list():
+    # A bare "99, 77, 22" carries no marker, so the generic patterns leave it —
+    # but the spot knows its own range and masks it literally.
     text = "Against QQ, 99, 77, 22 you are well ahead."
-    assert extract_claims(text) == []
+    assert extract_claims(text) != []
     assert extract_claims(text, known=["QQ, 99, 77, 22"]) == []
 
 

@@ -102,13 +102,18 @@ _MASK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"{_EDGE}{_RANK}{_RANK}[so]{_END}"),
     # Bare classes containing a face rank: QQ, AK, AQ, T9
     re.compile(rf"{_EDGE}(?:{_FACE}{_RANK}|{_RANK}{_FACE}){_END}"),
-    # Bare numeric pocket pairs: 22, 33 ... 99. A repeated rank is notation far
-    # more often than a quantity in coaching prose — a live run flagged
-    # "lower sets (`77`, `22`)" as invented numbers. The cost is that a quoted
-    # amount which happens to be one of those eight values goes unchecked.
-    # ... but never when a percent sign follows: "88% equity" is a statistic,
-    # not pocket eights, and masking it hid a genuinely invented figure.
-    re.compile(rf"{_EDGE}([2-9])\1(?![\w.]|\s*%)"),
+    # Numeric pocket pairs — but only where the text marks them as notation.
+    # Treating every standalone 22, 33 ... 99 as a rank blinded the checker to
+    # eight values that occur naturally as pots, stacks and raise sizes, on a
+    # checker that already ignores 0-10. So a signal is required:
+    #   `77`                      inline code, how the live failure was written
+    #   pocket 77 / holds 77 / set of 77 / pair of 77
+    # "The pot is 77 now" and "call 44 chips" stay checkable.
+    re.compile(r"`([2-9])\1`"),
+    re.compile(
+        rf"(?i:(?<=pocket )|(?<=holds )|(?<=holding )|(?<=set of )"
+        rf"|(?<=sets of )|(?<=pair of ))([2-9])\1{_END}"
+    ),
     # Explicit cards, possibly concatenated: AsKs, Qs2s9c
     re.compile(rf"{_EDGE}(?:{_RANK}[cdhs])+{_END}"),
 )

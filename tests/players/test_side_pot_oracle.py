@@ -205,7 +205,7 @@ def test_played_hands_settle_the_way_the_oracle_says(seed):
         assert result.awards[name] == pytest.approx(chips), name
 
 
-def test_the_oracle_and_production_agree_on_total_chips_across_many_hands():
+def test_the_oracle_and_production_agree_on_awards_across_many_hands():
     styles = list(STYLES)
     for seed in range(60):
         rng = random.Random(30_000 + seed)
@@ -221,5 +221,9 @@ def test_the_oracle_and_production_agree_on_total_chips_across_many_hands():
         ]
         result = play_hand(seats, rng=rng)
         expected = settle_by_hand(result.final_state)
+        # Compare the distribution, not just the total — conservation was
+        # already covered elsewhere and a wrong tranche split satisfies it.
+        assert set(result.awards) == set(expected), seed
+        for name, chips in expected.items():
+            assert result.awards[name] == pytest.approx(chips), (seed, name)
         assert sum(expected.values()) == pytest.approx(result.pot)
-        assert sum(result.awards.values()) == pytest.approx(result.pot)
