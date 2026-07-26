@@ -127,6 +127,13 @@ an effective stack at all and once produced a 10x-wrong SPR.
 **Monte Carlo takes an explicit `rng`.** Every sampling path accepts a
 `random.Random` so tests can pin it. Never call the module-level `random`.
 
+**A draw must be hero's own, and must have a card to come.** `features.py`
+counts an out only when hero's resulting hand beats what the *community cards
+alone* would make — a board of JsTs7c9c makes J-T-9-8-7 with any eight, and
+calling that hero's gutshot is wrong twice over. Draws are also suppressed on a
+complete board: four to a flush on the river is not a draw, nothing is coming.
+Both shipped to a live session before being caught.
+
 **Equity reports its own provenance.** `EquityResult.exact` says whether the
 result was enumerated or sampled. The coach surfaces this; don't drop it.
 

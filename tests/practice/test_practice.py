@@ -563,15 +563,56 @@ def test_enumerated_feedback_may_say_it_is_deterministic():
     assert "sampled equity estimate" not in rendered
 
 
-def test_a_terminal_call_is_not_called_numerically_exact():
-    """A terminal *tree* is not an exact *figure* when equity was sampled."""
+def sampled_terminal_analysis():
+    """A flop call that puts hero all-in, against a range wide enough to sample.
+
+    Pins the combination that matters: the decision tree ends here, so the EV
+    formula is structurally exact, while the equity feeding it is a Monte Carlo
+    estimate. Neither may be described as an exact figure.
+    """
+
+    import random as _random
+
+    from poker_coach.coaching.analysis import analyze
+    from poker_coach.domain import (
+        Action, HandState, PlayerState, Position, Street, parse_cards,
+    )
+
+    state = HandState(
+        players=[
+            PlayerState(name="you", position=Position.BTN, stack=8.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="v", position=Position.BB, stack=92.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=6.0,
+    ).apply(
+        Action(actor="v", type=ActionType.BET, amount=8.0, street=Street.FLOP)
+    )
+    return analyze(state, villain_range="22+, A2s+, KQo+",
+                   iterations=400, rng=_random.Random(1))
+
+
+def test_a_sampled_terminal_call_is_not_called_numerically_exact():
+    """The combination the previous version of this test failed to construct."""
 
     from poker_coach.practice.feedback import verified_lines
 
-    sampled, _ = sampled_and_exact_analyses()
-    terminal_sampled = critique(sampled, "call", opponent="station",
-                                action_type=ActionType.CALL, model=None)
-    assert not any("exact —" in line for line in terminal_sampled.feedback.verified)
+    analysis = sampled_terminal_analysis()
+    assert analysis.ev_is_terminal is True      # the tree really does end
+    assert analysis.equity.exact is False       # and the equity really is sampled
+
+    lines = verified_lines(analysis, "call", ActionType.CALL)
+    assert any("terminal decision tree" in line for line in lines)
+    assert not any("exact —" in line for line in lines)
+
+    rendered = critique(analysis, "call", opponent="station",
+                        action_type=ActionType.CALL, model=None).feedback.render()
+    assert "sampled equity estimate" in rendered
+    assert "Exact given" not in rendered
+
+
+def test_an_exact_terminal_call_uses_the_same_tree_wording():
+    from poker_coach.practice.feedback import verified_lines
 
     _, exact = sampled_and_exact_analyses()
     lines = verified_lines(exact, "call", ActionType.CALL)
