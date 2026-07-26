@@ -138,17 +138,31 @@ def test_percentages_whose_digits_look_like_ranks_survive_masking(text):
     assert claims[0].text == text
 
 
-def test_bare_digit_pair_is_read_as_a_number_not_notation():
-    # Documented trade-off: "77" with no marker is a number, not pocket sevens.
-    claims = extract_claims("The pot is 77 now.")
-    assert [c.value for c in claims] == [77.0]
+def test_a_bare_repeated_rank_reads_as_a_pocket_pair():
+    """A live run flagged "lower sets (`77`, `22`)" as invented numbers."""
+
+    assert extract_claims("Villain holds 77 and 22 here.") == []
 
 
-def test_known_notation_rescues_bare_digit_ranges():
-    # The generic patterns leave "99, 77, 22" alone, but the spot knows its own
-    # range, so masking it literally recovers the right reading.
+def test_a_repeated_rank_with_a_percent_sign_is_still_a_statistic():
+    # The masking must not swallow "88% equity" — that is the exact shape of
+    # an invented figure the checker exists to catch.
+    claims = extract_claims("You have 88% equity.")
+    assert [c.text for c in claims] == ["88%"]
+
+
+def test_the_pocket_pair_trade_off_is_stated():
+    # Cost of the above: a quoted amount that happens to be a repeated rank
+    # goes unchecked. Eight values, documented rather than hidden.
+    assert extract_claims("The pot is 77 now.") == []
+    assert [c.value for c in extract_claims("The pot is 76 now.")] == [76.0]
+
+
+def test_known_notation_also_covers_bare_digit_ranges():
+    # Both routes now clear it: the repeated-rank pattern, and the spot's own
+    # range string masked literally.
     text = "Against QQ, 99, 77, 22 you are well ahead."
-    assert extract_claims(text) != []
+    assert extract_claims(text) == []
     assert extract_claims(text, known=["QQ, 99, 77, 22"]) == []
 
 

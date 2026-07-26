@@ -102,6 +102,13 @@ _MASK_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(rf"{_EDGE}{_RANK}{_RANK}[so]{_END}"),
     # Bare classes containing a face rank: QQ, AK, AQ, T9
     re.compile(rf"{_EDGE}(?:{_FACE}{_RANK}|{_RANK}{_FACE}){_END}"),
+    # Bare numeric pocket pairs: 22, 33 ... 99. A repeated rank is notation far
+    # more often than a quantity in coaching prose — a live run flagged
+    # "lower sets (`77`, `22`)" as invented numbers. The cost is that a quoted
+    # amount which happens to be one of those eight values goes unchecked.
+    # ... but never when a percent sign follows: "88% equity" is a statistic,
+    # not pocket eights, and masking it hid a genuinely invented figure.
+    re.compile(rf"{_EDGE}([2-9])\1(?![\w.]|\s*%)"),
     # Explicit cards, possibly concatenated: AsKs, Qs2s9c
     re.compile(rf"{_EDGE}(?:{_RANK}[cdhs])+{_END}"),
 )
@@ -257,6 +264,7 @@ def grounded_values(analysis: SpotAnalysis) -> tuple[set[float], set[float]]:
     numbers: set[float] = {
         analysis.total_pot,
         analysis.to_call,
+        analysis.pot_after_call,
         analysis.effective_stack,
         analysis.hero_stack_behind,
         analysis.ev_call_vs_fold,

@@ -155,6 +155,19 @@ Do not "fix" an equity number by adjusting a test expectation. Published
 per-class preflop equities are rounded and suit-generic; exact enumeration is
 the authority.
 
+## When the model cites a number you did not give it
+
+The reflex is to widen `grounded_values()`. Resist it. The one live case —
+a model citing "a total pot of 35" from a pot of 20 and a call of 15 — was the
+checker being *right*: the facts implied that number but never stated it, and
+"the model quotes, never computes" makes computing it a violation.
+
+Allowing arithmetic closure has no stopping point: pot after calling, then pot
+after a raise, then final stack, then percentage differences, and the rule is
+gone. Add the quantity as a named `AnalysisFact` instead. It is usually worth
+saying out loud anyway — `Pot after hero calls` is more useful to a student
+than leaving them to do the addition.
+
 ## Poker notation in text processing
 
 Anything that parses response text must mask card and range tokens before
