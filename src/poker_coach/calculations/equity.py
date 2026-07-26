@@ -23,7 +23,7 @@ from ..domain.cards import Card, parse_cards, remaining_deck
 from .hand_eval import evaluate
 from .ranges import Range
 
-__all__ = ["EquityResult", "equity", "equity_vs_random"]
+__all__ = ["EquityResult", "equity", "equity_grid", "equity_vs_random"]
 
 Combo = tuple[Card, Card]
 Opponent = "Range | str | Sequence[Card]"
@@ -366,3 +366,66 @@ def equity_vs_random(
         iterations=iterations,
         rng=rng,
     )
+
+
+def equity_grid(
+    heroes: Sequence[Combo],
+    villain: Range,
+    board: Sequence[Card] = (),
+    *,
+    iterations: int = 400,
+    rng: random.Random | None = None,
+) -> dict[Combo, float]:
+    """Equity for *many* hero combos against one range, sharing the sampling.
+
+    Conditioning a range on an observed action means asking what every combo in
+    it would have done, which means an equity figure per combo. Doing that with
+    one `equity()` call each costs ~12ms apiece — 5.3 seconds for a 424-combo
+    station range, per decision. Almost all of it is setup: expanding the range,
+    rebuilding the deck, re-deriving blockers.
+
+    Here the villain hand and runout are drawn once per iteration and scored
+    against every hero combo that does not collide with them, so the whole grid
+    costs about what a single call used to. Combos are scored on a shared set of
+    deals rather than independent ones, which correlates their errors — fine for
+    ranking combos against a threshold, which is what conditioning needs.
+    """
+
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+
+    rng = rng or random.Random()
+    board = list(board)
+    needed = 5 - len(board)
+    if needed < 0:
+        raise ValueError(f"board cannot exceed 5 cards, got {len(board)}")
+
+    hero_list = [tuple(h) for h in heroes]
+    totals = {hero: 0.0 for hero in hero_list}
+    counts = {hero: 0 for hero in hero_list}
+
+    pool = villain.combos(dead=tuple(board))
+    if not pool:
+        raise ValueError(f"range {villain} has no combos after blockers")
+
+    for _ in range(iterations):
+        villain_hand = pool[rng.randrange(len(pool))]
+        dead = {*board, *villain_hand}
+        deck = remaining_deck(sorted(dead, key=str))
+        runout = rng.sample(deck, needed) if needed else []
+        full_board = [*board, *runout]
+        used = {*full_board, *villain_hand}
+
+        villain_score = evaluate([*villain_hand, *full_board]).score
+
+        for hero in hero_list:
+            if hero[0] in used or hero[1] in used:
+                continue  # this deal is impossible for that combo
+            hero_score = evaluate([*hero, *full_board]).score
+            totals[hero] += _showdown_share(hero_score, [villain_score])
+            counts[hero] += 1
+
+    return {
+        hero: (totals[hero] / counts[hero]) if counts[hero] else 0.0
+        for hero in hero_list
+    }

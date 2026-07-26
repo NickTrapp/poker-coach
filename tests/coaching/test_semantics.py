@@ -203,11 +203,76 @@ def test_a_pre_action_range_is_flagged_as_not_the_betting_range():
     assert "not the range they take this action with" in text
 
 
-def test_an_action_conditioned_range_is_labelled_a_read():
+def test_an_action_conditioned_range_says_it_is_given_the_action():
     a = analysed(conditioning=RangeConditioning.ACTION_CONDITIONED, villain_range="AA")
     text = fact(a, "Assumed villain range").render()
     assert "action-conditioned" in text
-    assert "assumed read, not derived" in text
+    assert "GIVEN the observed action" in text
+
+
+def test_conditioning_and_provenance_are_separate_claims():
+    """A caller's read and a derived posterior can both be action-conditioned.
+
+    The conditioning says *what the range is conditioned on*; the provenance
+    says *who decided it*. Collapsing them into one string — as the caveat once
+    did, by asserting an action-conditioned range was "not derived" — makes a
+    posterior computed from a known policy indistinguishable from a guess the
+    caller typed in.
+    """
+
+    typed_in = analysed(
+        conditioning=RangeConditioning.ACTION_CONDITIONED, villain_range="AA"
+    )
+    derived = analysed(
+        conditioning=RangeConditioning.ACTION_CONDITIONED,
+        villain_range=RangeAssumption(
+            "AA", RangeConditioning.ACTION_CONDITIONED,
+            provenance="derived from the opponent's policy",
+        ),
+    )
+
+    same = fact(typed_in, "Assumed villain range").assumptions
+    assert same == fact(derived, "Assumed villain range").assumptions
+    assert "not derived" in fact(typed_in, "Assumed villain range").render()
+    assert "derived from the opponent's policy" in (
+        fact(derived, "Assumed villain range").render()
+    )
+
+
+def test_provenance_reaches_the_rendered_fact():
+    """It is carried on every fact and was, for a while, rendered on none.
+
+    A sampled equity and an enumerated one print the same digits. Without the
+    source line the model sees only the category heading, so the distinction
+    the categories exist to draw stops at the prompt boundary.
+    """
+
+    a = analysed()
+    equity_fact = fact(a, "Hero equity")
+    assert equity_fact.provenance
+    assert equity_fact.provenance in equity_fact.render()
+
+
+def test_a_conditioned_range_reports_how_much_it_ruled_out():
+    a = analysed(
+        villain_range=RangeAssumption(
+            "AA", RangeConditioning.ACTION_CONDITIONED,
+            label="the part of 22+ that a station bets here",
+            combos=6, combos_before=384,
+        )
+    )
+    narrowing = fact(a, "Villain combos consistent with this line")
+    assert narrowing.rendered_value == "6 of 384"
+    # The combo dump never reaches the prose; the label stands in for it.
+    assert "the part of 22+" in fact(a, "Assumed villain range").rendered_value
+    # ...but every calculation still runs on the real notation.
+    assert a.villain_range == "AA"
+
+
+def test_an_unconditioned_range_reports_no_narrowing():
+    a = analysed()
+    assert a.range_assumption.narrowing is None
+    assert not any("consistent with this line" in f.key for f in a.facts)
 
 
 def test_villains_betting_range_is_open_unless_conditioned():

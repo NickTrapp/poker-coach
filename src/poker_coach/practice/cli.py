@@ -47,6 +47,16 @@ def render_turn(turn: HeroTurn, hero: str) -> str:
     if features:
         lines.append(f"  you have: {'; '.join(features)}")
 
+    # Name the range before quoting an equity against it. "Vs the assumed
+    # range" is fine when the range is fixed and printed in the header; once it
+    # moves with every action, the figure below is meaningless without it.
+    assumption = analysis.range_assumption
+    if assumption.narrowing is not None:
+        lines.append(
+            f"  villain's range: {assumption.narrowing} combos "
+            f"({assumption.observed_line})"
+        )
+
     lines.append(
         f"  equity vs the assumed range: {analysis.equity.equity_pct:.1f}%"
         + ("" if analysis.equity.exact else
@@ -132,10 +142,14 @@ def run_practice(
     stdout: TextIO,
     log_dir: str | None = "practice",
     iterations: int = 6000,
+    condition_on_action: bool = True,
 ) -> list[DecisionRecord]:
     """Run an interactive session. Returns every decision recorded."""
 
-    config = PracticeConfig(opponent_style=opponent, iterations=iterations)
+    config = PracticeConfig(
+        opponent_style=opponent, iterations=iterations,
+        condition_on_action=condition_on_action,
+    )
     rng = random.Random(seed) if seed is not None else random.Random()
 
     def show(text: str = "") -> None:

@@ -157,18 +157,50 @@ def test_every_archetype_has_a_configured_range():
 
 
 def test_the_config_states_where_the_range_came_from():
-    described = PracticeConfig(opponent_style="station").describe()
-    assert "not inferred from play" in described
-    assert "pre-action" in described
+    """Whatever the range is, the setup says who decided it."""
+
+    fixed = PracticeConfig(
+        opponent_style="station", condition_on_action=False
+    ).describe()
+    assert "not inferred from play" in fixed
+    assert "pre-action" in fixed
+
+    derived = PracticeConfig(opponent_style="station").describe()
+    assert "own policy" in derived
+    assert "not of a person" in derived
+    assert "action-conditioned" in derived
 
 
-def test_the_record_carries_the_range_and_its_source():
-    session = scripted_session([ActionType.CALL])
+def test_a_fixed_range_records_that_nothing_was_inferred():
+    session = scripted_session([ActionType.CALL], condition_on_action=False)
     session.play_hand(seed=7)
     record = session.records[0]
     assert record.villain_range == DEFAULT_RANGES["station"]
-    assert record.range_source == "fixed practice configuration, not inferred"
+    assert record.range_source == (
+        "fixed practice configuration, not inferred from play"
+    )
     assert record.range_conditioning == "pre-action"
+    assert record.range_narrowing is None
+
+
+def test_the_record_carries_the_range_the_coach_actually_saw():
+    """Not the one the config would produce now.
+
+    `build` used to re-derive the assumption from the config. With conditioning
+    on, that logs a range the coach never reasoned about — a transcript that
+    disagrees with the critique beside it is worse than none, since the whole
+    point of the log is reconstructing the decision later.
+    """
+
+    seen: list[HeroTurn] = []
+    session = scripted_session([ActionType.CALL])
+    session.on_feedback = lambda turn, _result: seen.append(turn)
+    session.play_hand(seed=7)
+
+    record, turn = session.records[0], seen[0]
+    assert record.villain_range == turn.analysis.range_assumption.notation
+    assert record.range_source == turn.analysis.range_assumption.provenance
+    assert record.range_narrowing == turn.analysis.range_assumption.narrowing
 
 
 # ---------------------------------------------------------------- feedback
@@ -401,7 +433,8 @@ def test_the_cli_plays_a_hand_from_scripted_input(tmp_path):
     )
     text = out.getvalue()
     assert "PRACTICE" in text
-    assert "not inferred from play" in text
+    # However the range was arrived at, the header says so before hand one.
+    assert "Source" in text and "not of a person" in text
     assert "VERIFIED CALCULATIONS" in text
     assert "hand 1" in text
     assert records

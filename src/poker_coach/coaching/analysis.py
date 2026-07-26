@@ -67,8 +67,9 @@ class RangeConditioning(str, Enum):
     price a bet overstates hero's equity whenever villain bets a subset."""
 
     ACTION_CONDITIONED = "action-conditioned"
-    """The range villain is assumed to hold *given* the observed action. Still
-    an assumption — it is a read, not a derivation."""
+    """The range villain is credited with *given* the observed action. Says
+    nothing about where it came from — see :attr:`RangeAssumption.provenance`,
+    which is a separate question and carries most of the trust."""
 
     UNSPECIFIED = "unspecified"
     """The caller did not say. Treated as pre-action, and flagged as such."""
@@ -84,7 +85,8 @@ _CONDITIONING_CAVEATS: dict[RangeConditioning, str] = {
         "take this action with"
     ),
     RangeConditioning.ACTION_CONDITIONED: (
-        "assumed range GIVEN the observed action; an assumed read, not derived"
+        "villain's range GIVEN the observed action, not the range they held "
+        "before it"
     ),
     RangeConditioning.UNSPECIFIED: (
         "conditioning not stated by the caller; treat as a pre-action range"
@@ -94,17 +96,61 @@ _CONDITIONING_CAVEATS: dict[RangeConditioning, str] = {
 
 @dataclass(frozen=True, slots=True)
 class RangeAssumption:
-    """A villain range together with what it is conditioned on."""
+    """A villain range, what it is conditioned on, and where it came from."""
 
     notation: str
     conditioning: RangeConditioning = RangeConditioning.UNSPECIFIED
+    #: A readable stand-in for :attr:`notation`, shown wherever the range is
+    #: displayed. A posterior is an explicit list of hundreds of combos: exactly
+    #: what the equity engine needs and exactly what nobody can read. Every
+    #: calculation still uses ``notation``; only the prose uses this.
+    #:
+    #: It must contain no digits that are not part of a card or range token —
+    #: it lands in prompt prose, which the grounding checker scans for numbers
+    #: the model was never given.
+    label: str | None = None
+    #: *Who decided this range* — a different question from what it is
+    #: conditioned on, and the one that carries most of the trust. A read the
+    #: caller typed in and a posterior derived from a known policy can both be
+    #: action-conditioned while deserving very different confidence.
+    provenance: str = "supplied by the caller, not derived"
+    #: How many combos survived conditioning, and how many were possible before
+    #: it. Both or neither. Stated as a fact rather than left implicit in the
+    #: notation, because "villain got narrower" is the whole point of
+    #: conditioning and a student cannot see it from a range string.
+    combos: int | None = None
+    combos_before: int | None = None
+    #: The opponent actions this range is conditioned on, in words
+    #: ("check preflop, then bet on the flop"). Kept apart from :attr:`label` so
+    #: a display can show the line without the surrounding phrasing. Countless,
+    #: for the same reason as the label.
+    observed_line: str | None = None
+    #: True when the range itself was derived by simulation, so it carries error
+    #: of its own. Independent of whether the *equity* was enumerated: a river
+    #: enumeration against a sampled range is exact arithmetic on an uncertain
+    #: input, and calling the result deterministic is the same
+    #: confidence-boundary mistake as calling a terminal call's EV exact when
+    #: the equity feeding it was sampled.
+    sampled: bool = False
+
+    @property
+    def narrowing(self) -> str | None:
+        if self.combos is None or self.combos_before is None:
+            return None
+        return f"{self.combos} of {self.combos_before}"
 
     @property
     def range(self) -> Range:
         return Range(self.notation)
 
+    @property
+    def display(self) -> str:
+        """What a human should be shown. Never a raw combo dump."""
+
+        return self.label or self.notation
+
     def __str__(self) -> str:
-        return self.notation
+        return self.display
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,8 +383,9 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
             str(equity_result),
             equity_category,
             assumptions=(
-                f"villain holds exactly: {assumption.notation}",
+                f"villain holds exactly: {assumption.display}",
                 assumption.conditioning.caveat,
+                assumption.provenance,
                 "all remaining cards are dealt with no further betting",
             ),
             provenance="exact enumeration" if equity_result.exact
@@ -351,12 +398,25 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
     facts.append(
         AnalysisFact(
             "Assumed villain range",
-            f"{assumption.notation} ({assumption.conditioning.value})",
+            f"{assumption.display} ({assumption.conditioning.value})",
             FactCategory.ASSUMED,
             assumptions=(assumption.conditioning.caveat,),
-            provenance="supplied by the caller, not derived",
+            provenance=assumption.provenance,
         )
     )
+
+    if assumption.narrowing is not None:
+        facts.append(
+            AnalysisFact(
+                "Villain combos consistent with this line",
+                assumption.narrowing,
+                FactCategory.ASSUMED,
+                assumptions=(assumption.provenance,),
+                scope="how much of the starting range the observed action "
+                      "rules out; every equity figure above is against what "
+                      "is left",
+            )
+        )
 
     # --- the EV figure, labelled by whether it is actually exact ------------
     if facing_bet:
@@ -366,7 +426,7 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                     "EV of calling vs folding",
                     f"{a['ev_call_vs_fold']:+.2f} chips",
                     FactCategory.ASSUMED,
-                    assumptions=(f"villain holds exactly: {assumption.notation}",),
+                    assumptions=(f"villain holds exactly: {assumption.display}",),
                     provenance="exact for a terminal call — no betting follows",
                     scope="compares CALLING with FOLDING only; it does not "
                           "evaluate raising",
@@ -379,7 +439,7 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                     f"{a['ev_call_vs_fold']:+.2f} chips",
                     FactCategory.ASSUMED,
                     assumptions=(
-                        f"villain holds exactly: {assumption.notation}",
+                        f"villain holds exactly: {assumption.display}",
                         "the hand is checked down from here — NO further betting",
                         # Deliberately no bare percentage here: the facts block
                         # must ground itself, and a stray "100%" reads as a

@@ -80,6 +80,10 @@ class DecisionRecord:
     output_tokens: int
     latency_seconds: float
     error: str | None = None
+    #: "192 of 384" when the range was narrowed by the opponent's actions,
+    #: None when it was not. Defaulted so transcripts written before range
+    #: conditioning existed still load.
+    range_narrowing: str | None = None
 
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -97,7 +101,11 @@ class DecisionRecord:
         analysis: SpotAnalysis,
         critique: "CritiqueResult",
     ) -> "DecisionRecord":
-        assumption = config.range_for()
+        # The assumption the analysis actually used, not the one the config
+        # would produce now — with range conditioning those differ, and a
+        # transcript that records a range the coach never saw is worse than no
+        # transcript at all.
+        assumption = analysis.range_assumption
         report = critique.grounding
         feedback = critique.feedback
 
@@ -109,7 +117,8 @@ class DecisionRecord:
             opponent_style=config.opponent_style,
             villain_range=assumption.notation,
             range_conditioning=assumption.conditioning.value,
-            range_source="fixed practice configuration, not inferred",
+            range_source=assumption.provenance,
+            range_narrowing=assumption.narrowing,
             street=analysis.street,
             hero_cards=analysis.hero_cards,
             board=analysis.board,
