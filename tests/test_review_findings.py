@@ -71,7 +71,15 @@ def test_equity_does_not_depend_on_the_order_ranges_are_supplied():
         rng=random.Random(5),
     )
     gap = abs(forwards.equity - backwards.equity)
-    assert gap < 2 * forwards.margin_of_error
+    if forwards.exact:
+        # Enumeration visits the same joint assignments in either order, so
+        # order independence is exact rather than statistical. Comparing
+        # against a zero margin of error would assert `0 < 0`.
+        assert backwards.exact
+        assert gap == 0.0
+        assert forwards.samples == backwards.samples
+    else:
+        assert gap < 2 * forwards.margin_of_error
 
 
 def test_pinned_combos_still_work_alongside_sampled_ranges():

@@ -327,3 +327,33 @@ def test_chaining_multiplies_weights_rather_than_replacing_them():
         # Still fractional: the product of two likelihoods, not the later one.
         assert second.weights[combo] < 1.0
         assert second.weights[combo] <= first.weights[combo] + 1e-9
+
+
+def test_the_line_reads_one_phrase_per_street():
+    """It is printed at every decision, so it has to stay short.
+
+    Two actions on one street are one line in poker — "check-call the flop",
+    not "check on the flop, then call on the flop".
+    """
+
+    state = unbet_flop()
+    player = make_player("v", "station", rng=random.Random(1), iterations=300)
+
+    first = condition_range(
+        Range(STATION), player, state,
+        Action(actor="v", type=ActionType.CHECK, street=Street.FLOP),
+        rng=random.Random(2),
+    )
+    facing = state.apply(
+        Action(actor="you", type=ActionType.BET, amount=6.0, street=Street.FLOP)
+    )
+    second = condition_range(
+        first, player, facing,
+        Action(actor="v", type=ActionType.CALL, amount=6.0, street=Street.FLOP),
+        rng=random.Random(3),
+    )
+
+    assert second.line() == "check-call the flop"
+    assert len(second.steps) == 2
+    # The counts stay per-action; only the wording is grouped.
+    assert second.describe().count("combos") == 2

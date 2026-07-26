@@ -114,12 +114,12 @@ def test_before_the_opponent_acts_the_range_is_pre_action():
     assert "has not acted yet" in first.provenance
 
 
-def steps_in(assumption) -> int:
-    """How many actions have been folded into a range, read off its label."""
+def streets_in(assumption) -> int:
+    """How many streets the range has been conditioned across."""
 
-    if assumption.narrowing is None:
+    if assumption.observed_line is None:
         return 0
-    return assumption.display.count("then") + 1
+    return len(assumption.observed_line.split(", "))
 
 
 def test_a_read_never_carries_across_hands():
@@ -135,18 +135,19 @@ def test_a_read_never_carries_across_hands():
     by_hand: dict[int, list[int]] = {}
     for turn, record in zip(seen, session.records):
         by_hand.setdefault(record.hand_number, []).append(
-            steps_in(turn.analysis.range_assumption)
+            streets_in(turn.analysis.range_assumption)
         )
 
     assert len(by_hand) >= 2, "need more than one hand to test carry-over"
     deep = [c for c in by_hand.values() if max(c) >= 3]
-    assert deep, "no hand accumulated enough steps for carry-over to show"
+    assert deep, "no hand reached enough streets for carry-over to show"
 
     for counts in by_hand.values():
-        # Heads-up, at most one opponent action can precede hero's first
-        # decision. A carried-over read would start at the previous hand's total.
+        # Only preflop can have happened before hero's first decision, so the
+        # line names at most one street. A read carried over from the previous
+        # hand would still name its flop, turn and river.
         assert counts[0] <= 1, counts
-        # And within a hand steps only ever accumulate.
+        # And within a hand the line only ever grows.
         assert counts == sorted(counts), counts
 
 

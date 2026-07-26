@@ -158,6 +158,15 @@ Simulated play only breaks in volume: the bugs found so far needed 300, 500 and
 1500 hands to surface. Run `stress_hands.py` after touching the runner or the
 player policy — no single-hand test substitutes.
 
+**Enumeration is gated on total deals, not on runouts.** A range is a finite
+set of combos, so `combos x runouts` is the cost — and a river spot against a
+range is *always* enumerable. Gating on runouts alone made those spots sample:
+a margin of error quoted on a quantity that has none, and slower than the exact
+answer (379 combos evaluate in 3ms where 6,000 samples take 168ms). Multiway,
+assignments where two opponents hold the same card are skipped, never repaired
+by re-drawing one opponent — that is the same non-uniformity `_draw_joint`
+guards against on the sampling side.
+
 Do not "fix" an equity number by adjusting a test expectation. Published
 per-class preflop equities are rounded and suit-generic; exact enumeration is
 the authority.

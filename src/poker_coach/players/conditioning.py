@@ -130,9 +130,31 @@ class ConditionedRange:
         return line
 
     def line(self) -> str:
-        """The observed line in words, with no counts. See `Step.phrase`."""
+        """The observed line in words, with no counts. See `Step.phrase`.
 
-        return ", then ".join(step.phrase() for step in self.steps)
+        Grouped by street, because a hand reads as one action per street even
+        when it took two: "check preflop, then check on the flop, then call on
+        the flop, then check on the turn" is the same line as "checked preflop,
+        check-called the flop, checked the turn", and only the second survives
+        being printed at every decision.
+        """
+
+        streets: list[tuple[Street, list[str]]] = []
+        for step in self.steps:
+            if streets and streets[-1][0] is step.street:
+                streets[-1][1].append(step.observed.value)
+            else:
+                streets.append((step.street, [step.observed.value]))
+
+        parts = []
+        for street, actions in streets:
+            verb = "-".join(actions)
+            where = (
+                "preflop" if street is Street.PREFLOP
+                else f"the {street.value}"
+            )
+            parts.append(f"{verb} {where}")
+        return ", ".join(parts)
 
 
 def condition_range(

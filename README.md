@@ -206,8 +206,10 @@ Three things this is **not**:
   this station, and the provenance line says so at every decision.
 - It is not exact. The likelihood is computed, but the equity ranking behind it
   is sampled, so a holding within sampling error of a threshold can fall either
-  way. A river enumeration against a conditioned range is exact arithmetic on an
-  uncertain input, and the heading changes to say that.
+  way. On the turn and river the equity itself *is* exact — the range is a
+  finite combo list, so there is nothing to sample — but it is exact arithmetic
+  on an uncertain input, and the heading says so rather than claiming the
+  figure is deterministic.
 - It is not always available. If no holding left in the range takes the action
   the opponent just took, conditioning stops, the last good range stands, and
   the fallback is reported rather than hidden.

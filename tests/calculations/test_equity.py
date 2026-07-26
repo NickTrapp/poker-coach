@@ -192,9 +192,30 @@ def test_range_reduced_to_one_combo_by_blockers_also_collapses():
     assert result.equity == equity("AsKs", "AdAc", board="Ah2c7d9h").equity
 
 
-def test_multi_combo_range_still_samples():
-    result = equity("AsKs", Range("77"), board="Qs2s9c4d", iterations=2000, rng=seeded())
-    assert result.exact is False
+def test_a_range_enumerates_when_the_deal_count_is_small():
+    """A range is a finite set of combos, so it is enumerable like any other.
+
+    Gating enumeration on board runouts alone made a river spot against a range
+    sample — a margin of error quoted on a quantity that has none, and slower
+    than the exact answer.
+    """
+
+    result = equity("AsKs", Range("77"), board="Qs2s9c4d",
+                    iterations=2000, rng=seeded())
+    assert result.exact is True
+    assert result.margin_of_error == 0.0
+
+    river = equity("AsKs", Range("22+, A2s+, K2s+"), board="Qs2s9c4d8h")
+    assert river.exact is True
+
+
+def test_a_range_still_samples_when_enumerating_would_be_huge():
+    flop = equity("AsKs", Range("22+, A2s+, K2s+, Q6s+, J7s+"),
+                  board="Qs2s9c", iterations=2000, rng=seeded())
+    assert flop.exact is False
+
+    preflop = equity("AsKs", Range("random"), iterations=2000, rng=seeded())
+    assert preflop.exact is False
 
 
 def test_equity_pct_matches_equity():
