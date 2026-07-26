@@ -244,11 +244,18 @@ Single-hand tests miss all of these.
   package does not have. Deriving one from the policy (simulate how each combo
   acts in the spot) is the natural next step and is *not* built.
 
-Feedback is three-way split: `verified` (deterministic arithmetic, no model),
+Feedback is three-way split: `verified` (deterministic calculations, no model),
 `interpretation` (the model's read), `unresolved` (the OPEN facts). Only the
 middle one needs a model, which is what makes the fallback honest. Never merge
 them into one block — a student reads undifferentiated prose with uniform
 confidence, which is the failure this project guards against on the model side.
+
+**Deterministic is not exact.** The `verified` heading is conditional on
+`analysis.equity.exact`: sampled equity makes every figure derived from it an
+estimate, including a terminal call's EV. The tree being terminal says nothing
+about the precision of the equity feeding it. Never label a sampled figure
+"exact" — that is the same confidence-boundary error the fact categories exist
+to prevent, and it is worse here because this layer faces the student.
 
 Grounding failure does **not** block. One repair request quoting the failed
 claims, then withhold the prose and show the arithmetic with a warning. The

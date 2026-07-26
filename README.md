@@ -149,12 +149,15 @@ is split by what justifies it, because those parts do not deserve equal
 confidence:
 
 ```
-VERIFIED ARITHMETIC
-(Exact given the stated range assumption.)
+VERIFIED CALCULATIONS
+(Deterministically computed from a sampled equity estimate; respect the
+ stated margin of error.)
   Showdown equity vs the assumed range: 32.25% (400 samples, ±4.58).
   Price: 0.5 to call into 1.5, so 25.0% equity breaks even.
-  Calling beats folding by 0.15 chips (an upper bound; it assumes the hand
-  checks down and hero realises all of its equity).
+  You raised. The only comparison computed here is calling against folding,
+  which does not evaluate your raise. For reference: calling beats folding
+  by 0.15 chips (an upper bound; it assumes the hand checks down and hero
+  realises all of its equity).
 
 EXPLOITATIVE INTERPRETATION
 (The coach's reading. Not proven, and only as good as the assumed range.)
@@ -167,6 +170,11 @@ UNRESOLVED
 
 The first and third sections need **no model at all**, which is why
 `--provider none` (the default) still teaches you something and costs nothing.
+
+"Deterministic" is not "exact": when equity was sampled, everything derived
+from it inherits that sampling error, and the heading says so. A terminal call
+has an exact decision *tree* — no betting follows — but its EV is still an
+estimate if the equity feeding it was one.
 
 **The range is configuration, not a read.** Choosing "station" tells the
 simulator how the opponent *acts*; it does not tell the coach what that

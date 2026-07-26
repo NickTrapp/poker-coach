@@ -180,7 +180,7 @@ def test_feedback_without_a_model_still_has_arithmetic():
     assert not result.feedback.has_interpretation
     assert result.model_name is None
     rendered = result.feedback.render()
-    assert "VERIFIED ARITHMETIC" in rendered
+    assert "VERIFIED CALCULATIONS" in rendered
     assert "EXPLOITATIVE INTERPRETATION" not in rendered
 
 
@@ -246,7 +246,7 @@ def test_a_persistently_ungrounded_reply_is_withheld():
     assert not result.feedback.has_interpretation
     rendered = result.feedback.render()
     assert "withheld" in rendered
-    assert "VERIFIED ARITHMETIC" in rendered   # the arithmetic survives
+    assert "VERIFIED CALCULATIONS" in rendered   # the arithmetic survives
 
 
 def test_a_model_failure_falls_back_rather_than_crashing():
@@ -402,7 +402,7 @@ def test_the_cli_plays_a_hand_from_scripted_input(tmp_path):
     text = out.getvalue()
     assert "PRACTICE" in text
     assert "not inferred from play" in text
-    assert "VERIFIED ARITHMETIC" in text
+    assert "VERIFIED CALCULATIONS" in text
     assert "hand 1" in text
     assert records
 
@@ -497,3 +497,84 @@ def test_feedback_after_a_call_and_a_fold_each_name_the_action():
                       action_type=AT.FOLD, model=None)
     assert "You called." in " ".join(called.feedback.verified)
     assert "You folded" in " ".join(folded.feedback.verified)
+
+
+def sampled_and_exact_analyses():
+    """One sampled analysis, and one where equity enumerates exactly."""
+
+    import random as _random
+
+    from poker_coach.coaching.analysis import analyze
+    from poker_coach.domain import (
+        Action, HandState, PlayerState, Position, Street, parse_cards,
+    )
+
+    sampled = analyze(
+        HandState(
+            players=[
+                PlayerState(name="you", position=Position.BTN, stack=97.0,
+                            hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+                PlayerState(name="v", position=Position.BB, stack=97.0),
+            ],
+            board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=6.0,
+        ).apply(
+            Action(actor="v", type=ActionType.BET, amount=6.0, street=Street.FLOP)
+        ),
+        villain_range="22+", iterations=400, rng=_random.Random(1),
+    )
+
+    # River, single-combo range: enumerates, and the call is terminal.
+    exact = analyze(
+        HandState(
+            players=[
+                PlayerState(name="you", position=Position.BTN, stack=97.0,
+                            hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+                PlayerState(name="v", position=Position.BB, stack=97.0),
+            ],
+            board=parse_cards("Qs2s9c4d7h"), street=Street.RIVER, pot=20.0,
+        ).apply(
+            Action(actor="v", type=ActionType.BET, amount=10.0, street=Street.RIVER)
+        ),
+        villain_range="QhQd", rng=_random.Random(1),
+    )
+    return sampled, exact
+
+
+def test_sampled_feedback_is_not_labelled_exact():
+    """The heading must not claim exactness the numbers underneath lack."""
+
+    sampled, _ = sampled_and_exact_analyses()
+    assert sampled.equity.exact is False
+
+    rendered = critique(sampled, "call", opponent="station",
+                        action_type=ActionType.CALL, model=None).feedback.render()
+    assert "Exact given" not in rendered
+    assert "sampled equity estimate" in rendered
+    assert "margin of error" in rendered
+
+
+def test_enumerated_feedback_may_say_it_is_deterministic():
+    _, exact = sampled_and_exact_analyses()
+    assert exact.equity.exact is True
+
+    rendered = critique(exact, "call", opponent="station",
+                        action_type=ActionType.CALL, model=None).feedback.render()
+    assert "under the stated assumptions" in rendered
+    assert "sampled equity estimate" not in rendered
+
+
+def test_a_terminal_call_is_not_called_numerically_exact():
+    """A terminal *tree* is not an exact *figure* when equity was sampled."""
+
+    from poker_coach.practice.feedback import verified_lines
+
+    sampled, _ = sampled_and_exact_analyses()
+    terminal_sampled = critique(sampled, "call", opponent="station",
+                                action_type=ActionType.CALL, model=None)
+    assert not any("exact —" in line for line in terminal_sampled.feedback.verified)
+
+    _, exact = sampled_and_exact_analyses()
+    lines = verified_lines(exact, "call", ActionType.CALL)
+    assert exact.ev_is_terminal
+    assert any("terminal decision tree" in line for line in lines)
+    assert not any("exact —" in line for line in lines)

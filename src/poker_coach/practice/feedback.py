@@ -9,8 +9,11 @@ interface side.
 So a critique has three visibly separate parts:
 
 ``verified``
-    Arithmetic over supplied facts. Generated deterministically, with no model
-    involved. Correct given the stated range assumption.
+    Calculations over supplied facts, generated deterministically with no model
+    involved. "Deterministic" is not "exact": when equity was sampled, every
+    figure derived from it inherits that sampling error, and the heading says
+    so. A terminal call has an exact decision *tree* — no betting follows — but
+    its EV is still an estimate if the equity feeding it was.
 ``interpretation``
     The model's reading — exploitative advice, hand-reading, what to watch for.
     Useful, not proven, and explicitly conditioned on an assumed opponent range
@@ -43,6 +46,10 @@ class Feedback:
     action_taken: str
     verified: list[str]
     unresolved: list[str]
+    #: Whether the equity behind the verified figures was enumerated rather
+    #: than sampled. Drives the heading, which must not claim exactness the
+    #: numbers underneath do not have.
+    equity_exact: bool = True
     interpretation: str | None = None
     grounding: GroundingReport | None = None
     repair_attempted: bool = False
@@ -58,9 +65,15 @@ class Feedback:
         blocks: list[str] = []
 
         if self.verified:
+            qualifier = (
+                "Deterministically computed under the stated assumptions."
+                if self.equity_exact
+                else "Deterministically computed from a sampled equity "
+                     "estimate; respect the stated margin of error."
+            )
             blocks.append(
-                "VERIFIED ARITHMETIC\n"
-                "(Exact given the stated range assumption.)\n"
+                "VERIFIED CALCULATIONS\n"
+                f"({qualifier})\n"
                 + "\n".join(f"  {line}" for line in self.verified)
             )
 
@@ -132,8 +145,10 @@ def verified_lines(
 
         ev = analysis.ev_call_vs_fold
         better = "beats" if ev > 0 else "loses to"
+        # "terminal decision tree", not "exact": the tree ends here, but the
+        # figure is only as exact as the equity feeding it.
         exactness = (
-            "exact — no betting follows"
+            "terminal decision tree — no betting follows"
             if analysis.ev_is_terminal
             else "an upper bound; it assumes the hand checks down and hero "
                  "realises all of its equity"
@@ -194,6 +209,7 @@ def build_feedback(
         action_taken=action_taken,
         verified=verified_lines(analysis, action_taken, action_type),
         unresolved=unresolved_lines(analysis),
+        equity_exact=analysis.equity.exact,
         interpretation=interpretation,
         grounding=grounding,
         repair_attempted=repair_attempted,
