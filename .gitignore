@@ -23,5 +23,7 @@ runs/
 # macOS
 .DS_Store
 
-# Practice session transcripts
-practice/
+# Practice session transcripts. Anchored with a leading slash: a bare
+# "practice/" matches a directory of that name at ANY depth, which silently
+# swallowed src/poker_coach/practice/ and tests/practice/ out of a commit.
+/practice/
