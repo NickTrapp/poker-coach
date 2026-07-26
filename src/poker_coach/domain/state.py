@@ -212,9 +212,12 @@ class HandState(BaseModel):
     def apply(self, action: Action, *, strict: bool = False) -> "HandState":
         """Return a new state with ``action`` applied. Raises on illegal actions.
 
-        ``strict`` additionally enforces turn order and raise-reopening, which
-        need the street's action history to evaluate. Replay and simulated play
-        pass it; directly-constructed states generally cannot. See
+        ``strict`` additionally enforces **turn order**, which needs the
+        street's action history to evaluate. Replay and simulated play pass it;
+        directly-constructed states generally cannot.
+
+        It does not gate raise-reopening — that lives in `legal_actions`, which
+        is always consulted, and degrades to permissive without history. See
         :mod:`poker_coach.domain.betting`.
         """
 

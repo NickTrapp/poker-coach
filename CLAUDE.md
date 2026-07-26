@@ -173,11 +173,15 @@ Enforcement has two tiers, and the split is deliberate:
 
 - **Always**: the action's street tag, the minimum raise, and that a street
   cannot be left with a bet unmatched. All derivable from state alone.
-- **`strict=True` only**: turn order and raise-reopening. These need the
-  street's action history, which a directly-built `HandState` cannot supply.
-  Replay and the table runner pass `strict=True`; test fixtures generally
-  cannot. Without history the min-raise floor also drops to the big blind —
-  permissive, never wrong.
+- **`strict=True` only**: turn order, and nothing else. It needs the street's
+  action history, which a directly-built `HandState` cannot supply. Replay and
+  the table runner pass it; test fixtures generally cannot.
+
+`strict` does **not** gate raise-reopening — that lives in `legal_actions`,
+which `validate` always consults, and degrades to permissive without history.
+So `replay(strict=False)` relaxes turn order but still rejects a forbidden
+re-raise. Without history the min-raise floor also drops to the big blind:
+permissive, never wrong.
 
 An all-in is always legal regardless of size. An under-raise all-in does *not*
 reopen the betting for players who already acted.

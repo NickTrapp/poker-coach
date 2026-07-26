@@ -992,3 +992,26 @@ def test_three_handed_preflop_order_is_button_then_blinds():
     assert action_order(Street.FLOP, seats) == [
         Position.SB, Position.BB, Position.BTN
     ]
+
+
+def test_strict_false_relaxes_turn_order_but_not_reopening():
+    """Pins what `strict` actually gates, since the docs once overclaimed.
+
+    Reopening lives in `legal_actions`, which `validate` always consults, so it
+    applies at every call. `strict` adds turn order and nothing else.
+    """
+
+    state = short_stack_underraise()
+
+    # Turn order: relaxed without strict, enforced with it.
+    out_of_turn = Action(actor="a", type=ActionType.CALL, amount=8.0,
+                         street=Street.PREFLOP)
+    state.apply(out_of_turn)                      # tolerated
+    state.apply(out_of_turn, strict=True)         # a is genuinely next here
+
+    # Reopening: enforced either way.
+    shove = Action(actor="a", type=ActionType.RAISE, amount=100.5,
+                   street=Street.PREFLOP)
+    for strict in (False, True):
+        with pytest.raises(ValueError, match="may not raise here"):
+            state.apply(shove, strict=strict)

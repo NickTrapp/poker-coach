@@ -14,13 +14,22 @@ Two tiers of enforcement, deliberately
 Some rules follow from the state alone and are always enforced: the street tag,
 the minimum raise, and whether a betting round has actually closed.
 
-Turn order and raise-reopening need the street's *action history* to evaluate —
-who has acted, and who has acted since the last full raise. A `HandState` built
-directly in a test or a fixture has no history and no way to acquire one, so
-those rules are enforced only under ``strict=True``, which replay and the table
-runner both pass. The split is explicit rather than inferred, because a
-guarantee that silently switches itself off is worse than one with a stated
-boundary.
+``strict=True`` adds exactly one rule: **turn order**. Knowing whose turn it is
+requires the street's action history, and a `HandState` built directly in a test
+or fixture has none and no way to acquire one, so it is opt-in. Replay and the
+table runner both pass it.
+
+Raise-reopening is *not* gated by the flag, though an earlier version of this
+docstring said it was. It lives in :meth:`BettingRound.legal_actions`, which
+:meth:`validate` always consults, so it applies at every call. That is not a
+loophole: without history every player reads as not-yet-acted and reopening
+degrades to permissive, so the rule only bites where the history exists to
+support it — the same tiering, reached automatically rather than by a flag.
+
+The practical consequence is that ``replay(strict=False)`` relaxes turn order
+but still rejects a forbidden re-raise after a short all-in. Inspecting a
+history containing one would need reopening enforcement to become configurable,
+which is not built because nothing has needed it.
 """
 
 from __future__ import annotations
