@@ -140,13 +140,33 @@ def test_percentages_whose_digits_look_like_ranks_survive_masking(text):
 
 @pytest.mark.parametrize(
     "text",
-    ["lower sets (`77`, `22`)", "Villain holds 77 here.",
-     "pocket 22 is behind", "a set of 99 is ahead"],
+    ["lower sets (`77`, `22`)", "pocket 22 is behind", "a set of 99 is ahead",
+     "a pair of 88 wins"],
 )
 def test_a_marked_repeated_rank_reads_as_a_pocket_pair(text):
     """A live run flagged "lower sets (`77`, `22`)" as invented numbers."""
 
     assert extract_claims(text) == []
+
+
+def test_holds_does_not_hide_a_percentage():
+    """"holds" reads equally well before cards and before quantities, so it
+    is not a marker. It used to be, and swallowed the figure."""
+
+    claims = extract_claims("Villain holds 77% equity.")
+    assert [c.text for c in claims] == ["77%"]
+
+
+def test_holding_does_not_hide_a_chip_amount():
+    claims = extract_claims("Villain is holding 77 chips.")
+    assert [c.value for c in claims] == [77.0]
+
+
+def test_a_percent_sign_vetoes_the_pocket_pair_reading_entirely():
+    # Closes the class rather than the instance: no rank is written with a
+    # percent sign, so the marker never wins against one.
+    assert [c.text for c in extract_claims("pocket 77% of the time")] == ["77%"]
+    assert [c.text for c in extract_claims("a set of 99% equity")] == ["99%"]
 
 
 def test_a_repeated_rank_with_a_percent_sign_is_still_a_statistic():
