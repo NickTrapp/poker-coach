@@ -57,12 +57,6 @@
       ],
       "actions": [
         {
-          "actor": "hero",
-          "type": "check",
-          "street": "preflop",
-          "amount": 0.0
-        },
-        {
           "actor": "villain",
           "type": "bet",
           "street": "preflop",
@@ -83,12 +77,6 @@
       ],
       "actions": [
         {
-          "actor": "hero",
-          "type": "check",
-          "street": "preflop",
-          "amount": 0.0
-        },
-        {
           "actor": "villain",
           "type": "bet",
           "street": "preflop",
@@ -103,5 +91,5 @@
       ]
     }
   ],
-  "notes": "Hero calls a 4-bet with AJo, flops an ace, and pays off."
+  "notes": "Hero calls a 4-bet with AJo, flops an ace, and pays off before folding the turn."
 }

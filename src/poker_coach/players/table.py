@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from ..calculations.hand_eval import HandRank, evaluate
 from ..domain.action import Action
 from ..domain.cards import Card, Deck
+from ..domain.betting import action_order
 from ..domain.enums import Position, Street
 from ..domain.history import HandHistory, SeatRecord, StreetRecord
 from ..domain.state import HandState
@@ -38,20 +39,6 @@ __all__ = ["Seat", "HandResult", "play_hand", "MAX_SEATS"]
 MAX_SEATS = 9
 
 _STREET_DEAL = {Street.FLOP: 3, Street.TURN: 1, Street.RIVER: 1}
-
-#: Physical seating order, clockwise from the small blind.
-_RING: tuple[Position, ...] = (
-    Position.SB,
-    Position.BB,
-    Position.UTG,
-    Position.UTG1,
-    Position.MP,
-    Position.LJ,
-    Position.HJ,
-    Position.CO,
-    Position.BTN,
-)
-
 
 @dataclass(frozen=True, slots=True)
 class Seat:
@@ -95,28 +82,6 @@ class HandResult:
         return f"{who} wins {self.pot:g} ({how})"
 
 
-def action_order(street: Street, positions: set[Position]) -> list[Position]:
-    """Seats in the order they act on ``street``.
-
-    Preflop opens to the left of the big blind and the blinds close. Later
-    streets open at the small blind and the button closes. Heads-up inverts the
-    postflop order, because there the small blind *is* the button.
-    """
-
-    ring = [p for p in _RING if p in positions]
-    if not ring:
-        raise ValueError("no known positions at the table")
-
-    if street is Street.PREFLOP:
-        pivot = ring.index(Position.BB)
-        return ring[pivot + 1 :] + ring[: pivot + 1]
-
-    if len(ring) == 2:
-        return [Position.BB, Position.SB]
-
-    return ring
-
-
 def _play_street(
     state: HandState,
     players: dict[str, Player],
@@ -145,7 +110,7 @@ def _play_street(
 
             action = players[name].act(state)
             action = action.model_copy(update={"street": state.street})
-            state = state.apply(action)
+            state = state.apply(action, strict=True)
             record.append(action)
             acted.add(name)
 

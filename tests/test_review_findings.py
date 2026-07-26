@@ -1,0 +1,476 @@
+"""Regressions for an external code review of the pushed repository.
+
+Every test here corresponds to a defect the review identified and that was
+reproduced before being fixed. They live together because their shared lesson
+is that each bug produced a *plausible* number rather than an error, and the
+existing suite passed throughout.
+"""
+
+import collections
+import random
+
+import pytest
+
+from poker_coach.calculations.equity import _draw_joint, equity
+from poker_coach.calculations.ranges import Range
+from poker_coach.coaching.analysis import _is_terminal_call, analyze
+from poker_coach.domain import (
+    Action,
+    ActionType,
+    HandState,
+    PlayerState,
+    Position,
+    Street,
+    parse_cards,
+)
+
+
+# ---------------------------------------------------- joint range sampling
+
+
+def test_multiway_ranges_are_sampled_uniformly_over_joint_assignments():
+    """Sequential conditioning over-weights whichever range blocks more.
+
+    opp1 in {AsKs, 2c3c}, opp2 in {AsQs, AsJs, 2c4c}. AsKs blocks As, leaving
+    opp2 exactly one combo; 2c3c blocks 2c, leaving two. Three legal joint
+    assignments, so each should appear a third of the time. The sequential
+    sampler produced 0.496 / 0.252 / 0.252.
+    """
+
+    p1 = Range("AsKs, 2c3c").combos()
+    p2 = Range("AsQs, AsJs, 2c4c").combos()
+
+    rng = random.Random(0)
+    counts: collections.Counter = collections.Counter()
+    accepted = 0
+    for _ in range(30_000):
+        _, hands = _draw_joint([p1, p2], set(), rng)
+        if hands is None:
+            continue
+        accepted += 1
+        counts[tuple("".join(map(str, h)) for h in hands)] += 1
+
+    assert len(counts) == 3
+    for share in (v / accepted for v in counts.values()):
+        assert share == pytest.approx(1 / 3, abs=0.02)
+
+
+def test_equity_does_not_depend_on_the_order_ranges_are_supplied():
+    forwards = equity(
+        "7h7d",
+        [Range("AsKs, 2c3c"), Range("AsQs, AsJs, 2c4c")],
+        board="9c4d2h",
+        iterations=20_000,
+        rng=random.Random(5),
+    )
+    backwards = equity(
+        "7h7d",
+        [Range("AsQs, AsJs, 2c4c"), Range("AsKs, 2c3c")],
+        board="9c4d2h",
+        iterations=20_000,
+        rng=random.Random(5),
+    )
+    gap = abs(forwards.equity - backwards.equity)
+    assert gap < 2 * forwards.margin_of_error
+
+
+def test_pinned_combos_still_work_alongside_sampled_ranges():
+    # A pinned combo lives in the dead set already; it must not be rejected
+    # as colliding with itself.
+    result = equity(
+        "7h7d", ["AsKs", Range("QQ")], board="9c4d2h",
+        iterations=2000, rng=random.Random(1),
+    )
+    assert result.samples > 1500
+
+
+# ------------------------------------------------------- terminal call EV
+
+
+def multiway_state(live_stack: float) -> HandState:
+    return HandState(
+        players=[
+            PlayerState(name="hero", position=Position.BTN, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="allin", position=Position.SB, stack=0.0,
+                        is_all_in=True, committed_this_street=20.0),
+            PlayerState(name="live", position=Position.BB, stack=live_stack,
+                        committed_this_street=20.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=10.0,
+    )
+
+
+def test_one_all_in_opponent_does_not_make_a_call_terminal():
+    """`min(...) <= 0` marked any spot with an all-in player as terminal.
+
+    That promoted the EV figure from "upper bound" to "exact" while a live
+    opponent could still bet future streets.
+    """
+
+    state = multiway_state(live_stack=80.0)
+    assert _is_terminal_call(state, "hero", state.amount_to_call("hero")) is False
+
+
+def test_a_call_is_terminal_once_every_opponent_is_all_in():
+    state = multiway_state(live_stack=0.0)
+    assert _is_terminal_call(state, "hero", state.amount_to_call("hero")) is True
+
+
+# ------------------------------------------------------------ MDF vs raise
+
+
+def raise_spot() -> HandState:
+    """Pot 10; hero bets 5; villain raises to 15. Hero faces 10 more."""
+
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.BTN, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="villain", position=Position.BB, stack=100.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=10.0,
+    )
+    state = state.apply(
+        Action(actor="hero", type=ActionType.BET, amount=5.0, street=Street.FLOP)
+    )
+    return state.apply(
+        Action(actor="villain", type=ActionType.RAISE, amount=15.0, street=Street.FLOP)
+    )
+
+
+def test_mdf_against_a_raise_uses_what_the_raiser_risked():
+    """Villain risked 15 to win the 15 already out there, so alpha is 50%.
+
+    Deriving it from hero's 10-chip call gave 33.3% — the figure for a bet
+    that was never made.
+    """
+
+    analysis = analyze(raise_spot(), villain_range="random",
+                       iterations=300, rng=random.Random(1))
+    assert analysis.total_pot == pytest.approx(30.0)
+    assert analysis.to_call == pytest.approx(10.0)
+    assert analysis.alpha == pytest.approx(0.5)
+    assert analysis.mdf == pytest.approx(0.5)
+
+
+def test_mdf_against_a_plain_bet_is_unchanged():
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.BTN, stack=97.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="villain", position=Position.BB, stack=97.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=6.0,
+    ).apply(
+        Action(actor="villain", type=ActionType.BET, amount=6.0, street=Street.FLOP)
+    )
+    analysis = analyze(state, villain_range="random",
+                       iterations=300, rng=random.Random(1))
+    assert analysis.alpha == pytest.approx(0.5)  # pot-sized bet
+
+
+def test_posted_blinds_produce_no_bluff_frequency():
+    """Nobody chose to post a blind, so a break-even bluff rate is meaningless."""
+
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.SB, stack=99.5,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True,
+                        committed_this_street=0.5),
+            PlayerState(name="villain", position=Position.BB, stack=99.0,
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    )
+    analysis = analyze(state, villain_range="random",
+                       iterations=300, rng=random.Random(1))
+    assert analysis.to_call > 0
+    assert analysis.mdf is None
+    assert analysis.alpha is None
+
+
+def test_a_preflop_raise_does_produce_a_bluff_frequency():
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.SB, stack=99.5,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True,
+                        committed_this_street=0.5),
+            PlayerState(name="villain", position=Position.BB, stack=96.0,
+                        committed_this_street=4.0),
+        ],
+        street=Street.PREFLOP,
+    )
+    analysis = analyze(state, villain_range="random",
+                       iterations=300, rng=random.Random(1))
+    assert analysis.alpha is not None
+
+
+# --------------------------------------------------------- multiway guard
+
+
+def test_multiway_analysis_is_refused_rather_than_answered_wrongly():
+    """One range cannot describe two opponents; a wrong number is worse than none."""
+
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.BTN, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="v1", position=Position.SB, stack=100.0,
+                        committed_this_street=10.0),
+            PlayerState(name="v2", position=Position.BB, stack=100.0,
+                        committed_this_street=10.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=15.0,
+    )
+    with pytest.raises(NotImplementedError, match="multiway analysis"):
+        analyze(state, villain_range="22+", iterations=200, rng=random.Random(3))
+
+
+def test_a_folded_third_player_leaves_a_analysable_heads_up_spot():
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.BTN, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")), is_hero=True),
+            PlayerState(name="folded", position=Position.SB, stack=100.0,
+                        has_folded=True),
+            PlayerState(name="v2", position=Position.BB, stack=100.0,
+                        committed_this_street=10.0),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=15.0,
+    )
+    analysis = analyze(state, villain_range="22+", iterations=200,
+                       rng=random.Random(3))
+    assert analysis.hero_cards == "AsKs"
+
+
+# ------------------------------------------------------- betting legality
+
+
+def preflop_state() -> HandState:
+    return HandState(
+        players=[
+            PlayerState(name="a", position=Position.SB, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")),
+                        committed_this_street=0.5),
+            PlayerState(name="b", position=Position.BB, stack=100.0,
+                        hole_cards=tuple(parse_cards("7h7d")),
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    )
+
+
+def test_an_action_tagged_with_the_wrong_street_is_rejected():
+    with pytest.raises(ValueError, match="tagged river but the hand is on"):
+        preflop_state().apply(
+            Action(actor="a", type=ActionType.RAISE, amount=3.0, street=Street.RIVER)
+        )
+
+
+def test_an_undersized_raise_is_rejected():
+    """Raise to 3, then to 3.5: an increment of 0.5 against a full raise of 2."""
+
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=3.0, street=Street.PREFLOP)
+    )
+    with pytest.raises(ValueError, match="below the minimum"):
+        state.apply(
+            Action(actor="b", type=ActionType.RAISE, amount=3.5, street=Street.PREFLOP)
+        )
+
+
+def test_a_full_raise_is_accepted():
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=3.0, street=Street.PREFLOP)
+    )
+    state.apply(
+        Action(actor="b", type=ActionType.RAISE, amount=5.0, street=Street.PREFLOP)
+    )
+
+
+def test_an_all_in_below_the_minimum_raise_is_still_legal():
+    """A short stack may always move all in, however small the increment."""
+
+    # Built through apply() so the raise is on record: a raises the blind of 1
+    # up to 6, a full increment of 5, so the next full raise would be to 11.
+    # b has 7 behind on top of its 1 and can only reach 8 — short of a full
+    # raise, and legal anyway because it is all-in.
+    state = HandState(
+        players=[
+            PlayerState(name="a", position=Position.SB, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")),
+                        committed_this_street=0.5),
+            PlayerState(name="b", position=Position.BB, stack=7.0,
+                        hole_cards=tuple(parse_cards("7h7d")),
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    ).apply(
+        Action(actor="a", type=ActionType.RAISE, amount=6.0, street=Street.PREFLOP)
+    )
+
+    assert state.betting_round().last_full_raise == pytest.approx(5.0)
+    assert state.betting_round().min_raise_to(1.0, 7.0) == pytest.approx(8.0)
+
+    after = state.apply(
+        Action(actor="b", type=ActionType.RAISE, amount=8.0, street=Street.PREFLOP)
+    )
+    assert after.player("b").is_all_in
+
+
+def test_without_history_the_minimum_raise_falls_back_to_the_big_blind():
+    """A stated boundary, not an oversight.
+
+    The last full raise cannot be recovered from a state built directly, so the
+    floor degrades to the big blind. That is permissive rather than wrong — it
+    accepts some raises a full history would reject, and never the reverse.
+    """
+
+    state = HandState(
+        players=[
+            PlayerState(name="a", position=Position.SB, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs")),
+                        committed_this_street=6.0),
+            PlayerState(name="b", position=Position.BB, stack=100.0,
+                        hole_cards=tuple(parse_cards("7h7d")),
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    )
+    round_ = state.betting_round()
+    assert round_.has_history is False
+    assert round_.last_full_raise == pytest.approx(state.big_blind)
+
+
+def test_a_street_cannot_be_left_with_a_bet_outstanding():
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=30.0, street=Street.PREFLOP)
+    )
+    with pytest.raises(ValueError, match="have not matched the bet"):
+        state.advance_street(parse_cards("2c7s9d"))
+
+
+def test_a_street_may_be_left_once_the_bet_is_matched():
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=30.0, street=Street.PREFLOP)
+    ).apply(
+        Action(actor="b", type=ActionType.CALL, amount=30.0, street=Street.PREFLOP)
+    )
+    assert state.advance_street(parse_cards("2c7s9d")).street is Street.FLOP
+
+
+def test_acting_out_of_turn_is_rejected_in_strict_mode():
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=3.0, street=Street.PREFLOP),
+        strict=True,
+    )
+    with pytest.raises(ValueError, match="it is b's turn"):
+        state.apply(
+            Action(actor="a", type=ActionType.RAISE, amount=9.0, street=Street.PREFLOP),
+            strict=True,
+        )
+
+
+def test_turn_order_is_not_enforced_without_history():
+    """Directly-built states cannot supply a turn; the boundary is documented."""
+
+    state = preflop_state().apply(
+        Action(actor="a", type=ActionType.RAISE, amount=3.0, street=Street.PREFLOP)
+    )
+    state.apply(
+        Action(actor="a", type=ActionType.RAISE, amount=9.0, street=Street.PREFLOP)
+    )
+
+
+def test_legal_actions_is_the_source_of_truth():
+    state = preflop_state()
+    options = {a.type: a for a in state.legal_actions("a")}
+    assert set(options) == {ActionType.FOLD, ActionType.CALL, ActionType.RAISE}
+    assert options[ActionType.CALL].min_amount == pytest.approx(1.0)
+    assert options[ActionType.RAISE].min_amount == pytest.approx(2.0)
+    assert options[ActionType.RAISE].max_amount == pytest.approx(100.5)
+
+
+def test_legal_actions_offers_a_check_when_nothing_is_owed():
+    state = HandState(
+        players=[
+            PlayerState(name="a", position=Position.SB, stack=100.0,
+                        hole_cards=tuple(parse_cards("AsKs"))),
+            PlayerState(name="b", position=Position.BB, stack=100.0,
+                        hole_cards=tuple(parse_cards("7h7d"))),
+        ],
+        board=parse_cards("Qs2s9c"), street=Street.FLOP, pot=10.0,
+    )
+    types = {a.type for a in state.legal_actions("a")}
+    assert types == {ActionType.CHECK, ActionType.BET}
+
+
+def test_every_listed_legal_action_is_actually_accepted():
+    state = preflop_state()
+    for option in state.legal_actions("a"):
+        state.apply(
+            Action(actor="a", type=option.type, amount=option.min_amount,
+                   street=Street.PREFLOP)
+        )
+
+
+def test_bundled_example_hands_replay_under_strict_rules():
+    import glob
+
+    from poker_coach.domain import HandHistory
+
+    paths = sorted(glob.glob("examples/hands/*.json"))
+    assert paths
+    for path in paths:
+        HandHistory.from_json_file(path).final_state()  # strict by default
+
+
+def test_simulated_hands_replay_under_strict_rules():
+    """The runner enforces legality, so its output must survive re-checking."""
+
+    import random as _random
+
+    from poker_coach.domain import HandHistory
+    from poker_coach.players import STYLES, Seat, make_player, play_hand
+
+    seating = [Position.SB, Position.BB, Position.UTG, Position.HJ]
+    styles = list(STYLES)
+
+    for i in range(24):
+        n = 2 + (i % 3)
+        rng = _random.Random(4000 + i)
+        seats = [
+            Seat(
+                make_player(f"p{j}", styles[(i + j) % len(styles)], rng=rng,
+                            iterations=60),
+                seating[j],
+                100.0 if j % 2 else 25.0,   # mixed stacks force all-ins
+            )
+            for j in range(n)
+        ]
+        result = play_hand(seats, rng=rng)
+        replayed = result.history.final_state()   # strict by default
+        assert replayed.total_pot == pytest.approx(result.pot)
+
+
+def test_a_player_never_proposes_an_action_the_rules_reject():
+    import random as _random
+
+    from poker_coach.players import STYLES, make_player
+
+    state = HandState(
+        players=[
+            PlayerState(name="hero", position=Position.SB, stack=40.0,
+                        hole_cards=tuple(parse_cards("AhAd")),
+                        committed_this_street=6.0),
+            PlayerState(name="villain", position=Position.BB, stack=9.0,
+                        hole_cards=tuple(parse_cards("KsKc")),
+                        committed_this_street=1.0),
+        ],
+        street=Street.PREFLOP,
+    )
+    for label in STYLES:
+        player = make_player("villain", label, rng=_random.Random(2), iterations=60)
+        action = player.act(state)
+        state.apply(action)   # raises if the policy proposed something illegal

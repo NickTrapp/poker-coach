@@ -155,6 +155,25 @@ wrong (`33.3%` → `3%`, and `77.40%` → `40%`). Patterns require a distinguish
 marker — suit, face rank, `+`/`s`/`o`, or a dash range — and literal masks need
 boundary guards. See `evaluation/grounding.py`.
 
+## Betting legality
+
+`domain/betting.py` owns what is legal. `state.legal_actions(name)` is the
+source of truth — anything not listed there is rejected by `apply()`. Never
+re-derive legality at a call site; ask.
+
+Enforcement has two tiers, and the split is deliberate:
+
+- **Always**: the action's street tag, the minimum raise, and that a street
+  cannot be left with a bet unmatched. All derivable from state alone.
+- **`strict=True` only**: turn order and raise-reopening. These need the
+  street's action history, which a directly-built `HandState` cannot supply.
+  Replay and the table runner pass `strict=True`; test fixtures generally
+  cannot. Without history the min-raise floor also drops to the big blind —
+  permissive, never wrong.
+
+An all-in is always legal regardless of size. An under-raise all-in does *not*
+reopen the betting for players who already acted.
+
 ## Simulated play
 
 `players/table.play_hand` handles 2–9 seats. Two things carry the complexity:

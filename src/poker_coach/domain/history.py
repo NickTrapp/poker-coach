@@ -161,8 +161,13 @@ class HandHistory(BaseModel):
             pot=dead_money,
         )
 
-    def replay(self) -> Iterator[DecisionPoint]:
-        """Walk the hand, yielding each action with the state preceding it."""
+    def replay(self, *, strict: bool = True) -> Iterator[DecisionPoint]:
+        """Walk the hand, yielding each action with the state preceding it.
+
+        Strict by default: a recorded hand carries its full action sequence, so
+        turn order and raise-reopening can be checked. Pass ``strict=False`` to
+        inspect a history known to be irregular rather than have it rejected.
+        """
 
         state = self.initial_state()
 
@@ -179,9 +184,9 @@ class HandHistory(BaseModel):
                     action=stamped,
                     is_hero=action.actor == self.hero,
                 )
-                state = state.apply(stamped)
+                state = state.apply(stamped, strict=strict)
 
-    def final_state(self) -> HandState:
+    def final_state(self, *, strict: bool = True) -> HandState:
         """Replay to the end and return the resulting state."""
 
         state = self.initial_state()
@@ -190,14 +195,15 @@ class HandHistory(BaseModel):
                 state = state.advance_street(record.cards)
             for action in record.actions:
                 state = state.apply(
-                    action.model_copy(update={"street": record.street})
+                    action.model_copy(update={"street": record.street}),
+                    strict=strict,
                 )
         return state
 
-    def hero_decisions(self) -> list[DecisionPoint]:
+    def hero_decisions(self, *, strict: bool = True) -> list[DecisionPoint]:
         """Only the points where the hero had a decision to make."""
 
-        return [point for point in self.replay() if point.is_hero]
+        return [point for point in self.replay(strict=strict) if point.is_hero]
 
     @property
     def board(self) -> list[Card]:

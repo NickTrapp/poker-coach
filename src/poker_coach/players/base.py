@@ -132,12 +132,23 @@ class RuleBasedPlayer:
         )
         return result.equity
 
+    def _may(self, state: HandState, kind: ActionType) -> bool:
+        """Whether ``kind`` is currently legal, per the rules engine.
+
+        The policy asks rather than assumes. An under-raise all-in does not
+        reopen the betting, so a hand strong enough to raise may still only be
+        allowed to call — a case this policy used to get wrong, and which the
+        state machine now rejects outright.
+        """
+
+        return any(option.type is kind for option in state.legal_actions(self.name))
+
     def _respond_to_bet(
         self, state: HandState, equity: float, to_call: float
     ) -> Action:
         price = required_equity(state.total_pot, to_call)
 
-        if equity >= self.style.raise_threshold:
+        if equity >= self.style.raise_threshold and self._may(state, ActionType.RAISE):
             target = self._raise_target(state)
             if target is not None:
                 return Action(
@@ -167,7 +178,7 @@ class RuleBasedPlayer:
         )
 
         if wants_value or wants_bluff:
-            if state.current_bet > 0:
+            if state.current_bet > 0 and self._may(state, ActionType.RAISE):
                 # Owing nothing while a bet is live is the big blind's option:
                 # everyone has matched, but the blind itself is a live bet, so
                 # aggression here is a raise. Betting would be illegal.
@@ -179,7 +190,7 @@ class RuleBasedPlayer:
                         amount=target,
                         street=state.street,
                     )
-            else:
+            elif self._may(state, ActionType.BET):
                 size = self._bet_size(state)
                 if size is not None:
                     return Action(
@@ -208,7 +219,11 @@ class RuleBasedPlayer:
 
         wanted = current_bet + (state.total_pot + to_call)
         ceiling = player.committed_this_street + player.stack
-        target = min(wanted, ceiling)
+        # Never propose below the legal minimum; an all-in is always allowed.
+        floor = state.betting_round().min_raise_to(
+            player.committed_this_street, player.stack
+        )
+        target = min(max(wanted, floor), ceiling)
 
         # An "all-in" that cannot exceed the current bet is a call, not a raise.
         return target if target > current_bet else None

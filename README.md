@@ -181,10 +181,14 @@ report.is_grounded   # False
 report.summary()     # "1 of 1 numeric claim(s) are not in the facts: 88%"
 ```
 
-Known limits, by design: bare integers 0–10 are ignored (too often prose — "two
-pair"), so a small invented count is not caught. A clean report means "no
-fabricated statistics", not "every word is true". See the module docstring in
-`evaluation/grounding.py` for the full scope.
+Known limits, stated precisely. A clean report means **every number quoted
+appears somewhere in the facts** — not that it was attached to the right
+quantity. With equity at 71.8% and MDF at 50%, "Hero has 50% equity" passes,
+because 50 is a supplied percentage. Bare integers 0–10 are ignored as well
+(too often prose — "two pair"), so a small invented count slips through, and
+non-numeric claims are not checked at all. See the module docstring in
+`evaluation/grounding.py` for why closing this needs fact-addressed generation
+rather than a better regex.
 
 ## Benchmarking against a real model
 

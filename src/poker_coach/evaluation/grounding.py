@@ -19,6 +19,22 @@ Flagging those would drown the real signal, so:
 
 So a clean report means "no fabricated statistics", not "every word is true".
 
+**Values are checked, not meanings — and this is weaker than it sounds.** Every
+percentage is checked against one pool of supplied percentages and every other
+number against one pool of numbers. A claim passes when its *magnitude* appears
+somewhere in the facts, regardless of what the sentence says the number means.
+Demonstrated: with hero's true equity at 71.80% and MDF at 50%, the sentence
+"Hero has 50% equity here" **passes**, because 50 is in the percentage pool.
+
+So the honest guarantee is narrower than "no fabricated statistics": it is
+*every number quoted appears somewhere in the facts*. Attaching it to the wrong
+quantity is not caught. Allowing sign flips widens this slightly further.
+
+Closing it properly means fact-addressed generation — give each fact an id and
+a unit, have the model cite `[hero_equity_pct]`, and check the citation rather
+than the digits. That is a change to how responses are produced, not a patch to
+this module, which is why it is written down here rather than bolted on.
+
 **Non-numeric claims are entirely unchecked, and this matters more than it
 sounds.** In the first live run against a real model, the response passed with
 all six numeric claims traceable — while also asserting the hero held a "nut

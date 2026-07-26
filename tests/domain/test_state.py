@@ -104,7 +104,9 @@ def test_raise_must_exceed_the_current_bet():
     state = make_state().apply(
         Action(actor="hero", type=ActionType.RAISE, amount=5.0)
     )
-    with pytest.raises(ValueError, match="does not exceed"):
+    # Rejected by the minimum-raise rule, which now fires first and says why:
+    # over a bet of 5 raised from 1, the next raise must reach 9.
+    with pytest.raises(ValueError, match="below the minimum"):
         state.apply(Action(actor="villain", type=ActionType.RAISE, amount=4.0))
 
 

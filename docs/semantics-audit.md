@@ -79,3 +79,62 @@ convention now has its own regression test.
 The fix is therefore not "stop the model reasoning" but "supply the fact it
 predictably reaches for": `implied_odds_breakeven` is now computed on
 non-terminal streets and rendered with its assumptions.
+
+## External review (post-push) — all six findings reproduced
+
+An outside review of the pushed repository raised six defects. Each was
+reproduced before being fixed; none had been caught by the 872-test suite,
+because every one produced a plausible number rather than an error.
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | `apply()` enforces no turn order, street match, min-raise, or round completion | fixed |
+| 2 | `analyze()` applies one range to a multiway pot | fixed — refuses |
+| 3 | Multiway range sampling is sequential, not uniform-joint | fixed |
+| 4 | One all-in opponent marks a call terminal | fixed |
+| 5 | MDF/alpha derive from hero's call, wrong against raises | fixed |
+| 6 | Grounding matches magnitudes, not meanings | **confirmed, documented** |
+
+Measured before/after:
+
+- **(3)** With `opp1 ∈ {AsKs, 2c3c}`, `opp2 ∈ {AsQs, AsJs, 2c4c}` — three legal
+  joint assignments — the old sampler produced 0.496 / 0.252 / 0.252 where
+  uniform is 1/3 each. It also made equity depend on the order ranges were
+  passed. Now 0.334 / 0.330 / 0.336, order-invariant within the margin of error.
+- **(5)** Pot 10, hero bets 5, villain raises to 15: reported alpha 33.3%, true
+  50%. The aggressor's wager is their whole street commitment, not hero's call.
+- **(6)** With equity 71.80% and MDF 50%, "Hero has 50% equity" passed.
+
+### Betting legality — `domain/betting.py`
+
+`BettingRound` is derived from `HandState` on demand, so it cannot fall out of
+sync, and `state.legal_actions(name)` is the single source of truth. Two tiers,
+because they are not equally knowable:
+
+- **Always enforced** (derivable from state alone): the street tag on an action,
+  the minimum raise, and that a street cannot be left with a bet unmatched.
+- **`strict=True` only** (needs the street's action history): turn order and
+  raise-reopening. Replay and the table runner pass it. A directly-built state
+  has no history and no way to acquire one; without it the minimum-raise floor
+  also degrades to the big blind, which is permissive rather than wrong.
+
+Enabling it immediately found **two of the three bundled example hands were
+illegal** — heads-up the big blind acts first from the flop on, and both had the
+small blind leading. Same money, wrong order; they replayed silently for months.
+Regenerated, with identical pots.
+
+A 1200-hand run across 2–6 seats with mixed stacks then surfaced two more:
+
+- Float underflow set a stack to `-7.1e-15`, which `validate_assignment`
+  rejected. Clamped before assignment rather than after.
+- The opponent policy proposed re-raises when an under-raise all-in had not
+  reopened the betting. It now asks `legal_actions()` instead of assuming —
+  which is the reviewer's point applied one layer up.
+
+After both: 1200 hands, zero failures, every emitted history replaying strictly.
+
+### Still open
+
+**Grounding semantics (6).** Needs fact ids and units, model citations like
+`[hero_equity_pct]`, and validation of the citation rather than the digits —
+a change to how responses are produced, not a patch to the checker.

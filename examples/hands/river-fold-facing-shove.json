@@ -2,7 +2,7 @@
   "seats": [
     {
       "name": "hero",
-      "position": "CO",
+      "position": "SB",
       "starting_stack": 100.0,
       "hole_cards": [
         "Kd",
@@ -123,5 +123,5 @@
       ]
     }
   ],
-  "notes": "Hero has top pair on a board where villain's shove represents everything better."
+  "notes": "Hero has top pair on a board where villain's river shove represents everything better."
 }
