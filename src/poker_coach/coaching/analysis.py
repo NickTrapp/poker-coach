@@ -42,7 +42,7 @@ from ..calculations.pot_odds import (
     minimum_defence_frequency,
     pot_odds,
 )
-from ..calculations.ranges import Range
+from ..calculations.ranges import Range, WeightedRange
 from ..domain.cards import cards_to_str
 from ..domain.enums import Street
 from ..domain.state import HandState
@@ -125,6 +125,11 @@ class RangeAssumption:
     #: a display can show the line without the surrounding phrasing. Countless,
     #: for the same reason as the label.
     observed_line: str | None = None
+    #: The posterior with its probabilities intact. Kept apart from
+    #: :attr:`notation`, which is only the *support*: a range string says which
+    #: combos are in, never that one is four times likelier than another. Every
+    #: equity figure measures against this when it is present.
+    weighted: WeightedRange | None = None
     #: True when the range itself was derived by simulation, so it carries error
     #: of its own. Independent of whether the *equity* was enumerated: a river
     #: enumeration against a sampled range is exact arithmetic on an uncertain
@@ -141,7 +146,20 @@ class RangeAssumption:
 
     @property
     def range(self) -> Range:
+        """The support, every combo equally likely. For display and blockers."""
+
         return Range(self.notation)
+
+    @property
+    def for_equity(self) -> Range | WeightedRange:
+        """What a calculation must measure against.
+
+        The weighted posterior when there is one. Using :attr:`range` instead
+        silently flattens it — for a maniac that moved hero's equity by 2.4
+        points, twice the margin of error the figure was quoted with.
+        """
+
+        return self.weighted if self.weighted is not None else self.range
 
     @property
     def display(self) -> str:
@@ -623,7 +641,7 @@ def analyze(
 
     eq = equity(
         player.hole_cards,
-        assumption.range,
+        assumption.for_equity,
         state.board,
         iterations=iterations,
         rng=rng_obj,

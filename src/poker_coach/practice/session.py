@@ -198,6 +198,11 @@ class _RangeTracker:
             label=f"the hands a {style} takes this line with "
                   f"({posterior.line()})",
             observed_line=posterior.line(),
+            # The support goes in `notation` for display and blockers; the
+            # probabilities go here, and this is what every figure is computed
+            # against. Handing over only the support would keep the "∝" of
+            # `P(H|A,S) ∝ P(A|H,S)·P(H|S)` and discard the distribution.
+            weighted=posterior.to_weighted(),
             provenance=provenance,
             combos=posterior.survivors,
             combos_before=posterior.steps[0].considered,

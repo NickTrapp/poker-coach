@@ -24,9 +24,15 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Iterator, Sequence
 
-from ..domain.cards import Card, Rank, Suit
+from ..domain.cards import Card, Rank, Suit, cards_to_str
 
-__all__ = ["Range", "expand_classes", "class_combos", "canonical_class"]
+__all__ = [
+    "Range",
+    "WeightedRange",
+    "expand_classes",
+    "class_combos",
+    "canonical_class",
+]
 
 _RANK_ORDER: tuple[Rank, ...] = tuple(sorted(Rank, reverse=True))
 _RANK_SYMBOLS = "AKQJT98765432"
@@ -311,3 +317,68 @@ class Range:
         """Share of the 1326 possible starting hands this range covers."""
 
         return 100.0 * len(self.combos()) / 1326.0
+
+
+@dataclass(frozen=True)
+class WeightedRange:
+    """Combos that are *not* equally likely.
+
+    A `Range` is a set: every combo in it is as likely as every other. That is
+    the right model for "villain opens 22+, A2s+" and the wrong one for a
+    posterior, where an opponent who bluffs some fraction of the time holds its
+    bluffs at a fraction of the weight of its value hands.
+
+    Flattening a posterior to its support is a real distortion, not a rounding
+    one. A maniac's flop betting range conditions to 821 value combos at weight
+    1.0 and 260 bluffs at 0.6; as a set the bluffs are 24.1% of the range, and
+    they should be 16.0%. That moved hero's equity by 2.4 points — twice the
+    sampling margin the figure was quoted with.
+
+    Weights are relative, not probabilities: only their ratios matter, and the
+    equity engine normalises. Zero-weight combos are dropped on construction, so
+    membership and support always agree.
+    """
+
+    weights: dict[tuple[Card, Card], float]
+
+    def __post_init__(self) -> None:
+        live = {c: w for c, w in self.weights.items() if w > 0}
+        if not live:
+            raise ValueError("a weighted range needs at least one combo")
+        object.__setattr__(self, "weights", live)
+
+    @classmethod
+    def uniform(cls, combos: Iterable[tuple[Card, Card]]) -> "WeightedRange":
+        return cls({combo: 1.0 for combo in combos})
+
+    def combos(self, dead: Sequence[Card] = ()) -> list[tuple[Card, Card]]:
+        blocked = set(dead)
+        return [c for c in self.weights if not blocked & set(c)]
+
+    def weighted_combos(
+        self, dead: Sequence[Card] = ()
+    ) -> list[tuple[tuple[Card, Card], float]]:
+        """Surviving combos with their weights, for the equity engine."""
+
+        blocked = set(dead)
+        return [(c, w) for c, w in self.weights.items() if not blocked & set(c)]
+
+    @property
+    def is_uniform(self) -> bool:
+        """True when this carries no more information than a plain `Range`."""
+
+        return len(set(self.weights.values())) <= 1
+
+    def to_range(self) -> Range:
+        """The support alone. Lossy unless :attr:`is_uniform` — see the class
+        docstring for what gets lost."""
+
+        return Range(", ".join(cards_to_str(c) for c in self.weights))
+
+    def __len__(self) -> int:
+        return len(self.weights)
+
+    def __str__(self) -> str:
+        if self.is_uniform:
+            return str(self.to_range())
+        return f"{len(self.weights)} combos, weighted"

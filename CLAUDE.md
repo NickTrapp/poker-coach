@@ -271,13 +271,24 @@ Four rules:
   this configured station would hold, not what a person would. Say so wherever
   it surfaces.
 
-The likelihood is exact wherever the policy is deterministic; the only
-stochastic branch is bluffing an unbet pot, whose probability is a declared
-parameter and is read off rather than sampled. What *is* sampled is the equity
-grid behind it, so combos within sampling error of a threshold resolve
-arbitrarily — including, sometimes, the hand the opponent actually holds. That
-band is a property of the method. `tests/players/test_conditioning.py` checks
-structure exactly and agreement tolerantly, on purpose.
+**The likelihood is a plug-in estimate, not the exact quantity.** The policy's
+branch is deterministic *conditional on an equity estimate*, but the policy
+gets that estimate from Monte Carlo and thresholds it — so unconditionally the
+action is random over the policy's own sampling. `P(A|H,S)` is really
+`P(Ê(H,S) lands on the side giving A)`; this takes one draw of `Ê` and reads
+off 0 or 1. Do not describe it as exact. Combos within sampling error of a
+threshold resolve arbitrarily, sometimes against the hand the opponent actually
+holds. `tests/players/test_conditioning.py` checks structure exactly and
+agreement tolerantly, on purpose.
+
+**Weights are the posterior; the support is not.** `to_range()` keeps only
+which combos survived and is lossy the moment the policy bluffs.
+`to_weighted()` returns a `WeightedRange`, and that is what every calculation
+must consume — `RangeAssumption.for_equity`, never `.range`. Flattening a
+maniac's flop betting range put its bluffs at 24.1% of the range instead of
+16.0% and moved hero's equity 2.4 points, twice the margin of error the figure
+was quoted with. Three of the five archetypes bluff; a station does not, which
+is exactly why the bug could ship unnoticed.
 
 An emptied posterior is real, not a bug: the opponent can hold a hand outside
 the prior, and the grid can disagree with the sample the policy decided from.

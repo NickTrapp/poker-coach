@@ -161,6 +161,7 @@ def test_a_bluffing_policy_gives_fractional_weights():
     assert any(w < 1.0 for w in weights)
     assert not posterior.is_certain
     assert "only bluff here sometimes" in posterior.describe()
+    assert "proportionally less weight" in posterior.describe()
 
 
 def test_the_description_reports_how_much_was_eliminated():

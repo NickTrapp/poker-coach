@@ -9,6 +9,8 @@ equity measured against an inexact range — are stated rather than hidden.
 
 import random
 
+import pytest
+
 from poker_coach.coaching.analysis import RangeConditioning
 from poker_coach.domain.action import Action
 from poker_coach.domain.enums import ActionType, Position, Street
@@ -395,3 +397,126 @@ def test_the_cli_narrows_the_range_by_default(tmp_path):
     assert "narrowed by each action" in text
     assert "villain's range:" in text
     assert any(r.range_narrowing is not None for r in records)
+
+
+# ------------------------------------------------- weights reach the engine
+
+
+def test_the_posterior_weights_reach_the_equity_calculation():
+    """The support is not the posterior.
+
+    `P(H|A,S) ∝ P(A|H,S)·P(H|S)` computes a *distribution*. Handing the coach
+    the list of surviving combos keeps the proportionality symbol and discards
+    everything to the right of it: a bluff that bets 20% of the time ends up as
+    likely as a value hand that always does.
+
+    The fixture makes the two answers far apart on purpose — hero is drawing
+    dead against the value hand and unbeatable against the bluff, so flat and
+    weighted differ by tens of points rather than by sampling noise.
+    """
+
+    from poker_coach.calculations.equity import equity
+    from poker_coach.calculations.ranges import Range, WeightedRange
+    from poker_coach.coaching.analysis import RangeAssumption
+
+    hero = parse_cards("KsKd")
+    board = parse_cards("2h7c9dTs4c")
+    value, bluff = tuple(parse_cards("AsAh")), tuple(parse_cards("3s5h"))
+
+    posterior = WeightedRange({value: 1.0, bluff: 0.25})
+    assumption = RangeAssumption(
+        notation="AsAh, 3s5h", label="a label", weighted=posterior,
+    )
+
+    # `range` is the support and must stay flat — displays and blockers use it.
+    # (Combo order is normalised, so compare as unordered card sets.)
+    assert {frozenset(c) for c in assumption.range.combos()} == {
+        frozenset(value), frozenset(bluff)
+    }
+    assert assumption.for_equity is posterior
+
+    weighted = equity(hero, assumption.for_equity, board).equity_pct
+    flat = equity(hero, Range("AsAh, 3s5h"), board).equity_pct
+
+    # Hero loses to AsAh and beats 3s5h, so the answer is just the bluff's share.
+    assert flat == pytest.approx(50.0)
+    assert weighted == pytest.approx(20.0)
+
+
+def test_analyze_measures_against_the_weighted_posterior():
+    """End to end: the flattening has to be impossible, not merely avoided."""
+
+    from poker_coach.calculations.ranges import WeightedRange
+    from poker_coach.coaching.analysis import (
+        RangeAssumption,
+        RangeConditioning,
+        analyze,
+    )
+
+    value, bluff = tuple(parse_cards("AsAh")), tuple(parse_cards("3s5h"))
+    state = HandState(
+        players=[
+            PlayerState(name="villain", position=Position.BB, stack=50.0,
+                        hole_cards=value),
+            PlayerState(name="you", position=Position.SB, stack=50.0,
+                        hole_cards=tuple(parse_cards("KsKd")), is_hero=True),
+        ],
+        board=parse_cards("2h7c9dTs4c"), street=Street.RIVER, pot=20.0,
+    )
+
+    def analysed(weighted):
+        return analyze(
+            state, hero="you",
+            villain_range=RangeAssumption(
+                notation="AsAh, 3s5h",
+                conditioning=RangeConditioning.ACTION_CONDITIONED,
+                label="a label", weighted=weighted,
+            ),
+            rng=random.Random(1),
+        )
+
+    flat = analysed(None)
+    tilted = analysed(WeightedRange({value: 1.0, bluff: 0.25}))
+
+    assert flat.equity.equity_pct == pytest.approx(50.0)
+    assert tilted.equity.equity_pct == pytest.approx(20.0)
+    # And every figure downstream of equity moves with it.
+    assert tilted.ev_call_vs_fold != flat.ev_call_vs_fold
+
+
+def test_a_bluffing_opponents_range_is_not_flattened_in_practice():
+    """The archetypes that bluff are the ones this matters for.
+
+    A station never bluffs, so its posterior is uniform and flattening it is a
+    no-op — which is why the defect could ship unnoticed. Three of the five
+    archetypes do bluff.
+    """
+
+    session, seen = passive_session(opponent_style="maniac")
+    for seed in (11, 23, 37, 41):
+        session.play_hand(seed=seed)
+
+    conditioned = [
+        t.analysis.range_assumption for t in seen
+        if t.analysis.range_assumption.narrowing
+    ]
+    assert conditioned, "no decision followed an opponent action"
+    assert all(a.weighted is not None for a in conditioned)
+
+    uneven = [a for a in conditioned if not a.weighted.is_uniform]
+    assert uneven, "the maniac fixture produced no partial-weight combos"
+
+    from poker_coach.calculations.equity import equity
+
+    moved = 0
+    for assumption in uneven:
+        turn = next(t for t in seen if t.analysis.range_assumption is assumption)
+        hero = parse_cards(turn.analysis.hero_cards)
+        board = parse_cards(turn.analysis.board) if turn.analysis.board else []
+        w = equity(hero, assumption.weighted, board,
+                   iterations=8000, rng=random.Random(2))
+        f = equity(hero, assumption.range, board,
+                   iterations=8000, rng=random.Random(2))
+        if abs(w.equity_pct - f.equity_pct) > 100 * w.margin_of_error:
+            moved += 1
+    assert moved, "weighting never moved the equity beyond sampling noise"

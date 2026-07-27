@@ -16,15 +16,26 @@ Three honest limits, all stated rather than smoothed over:
 large improvement on a fixed pre-action range, which is wrong the moment the
 opponent does anything.
 
-**The likelihood is exact where the policy is deterministic** — folding,
-calling, raising and value betting all are. The single stochastic branch is
-bluffing an unbet pot, whose probability is a declared parameter, so it is read
-off rather than sampled.
+**The likelihood is a plug-in approximation, not the exact quantity.** The
+policy's branch is deterministic *conditional on an equity estimate* — folding,
+calling, raising and value betting all are, and the one genuinely stochastic
+branch (bluffing an unbet pot) has a declared probability that is read off
+rather than sampled. But the policy reaches that branch by estimating its own
+equity with Monte Carlo and thresholding the estimate, so unconditionally the
+action is random over the policy's own sampling. What the true likelihood asks
+for is
 
-**The equity read behind the policy is sampled**, so combos sitting within
-sampling error of a threshold could plausibly have gone either way and this
-resolves them one way. Raising `iterations` narrows that band; nothing removes
-it. Combos near the boundary are the least trustworthy part of the posterior.
+    P(A | H, S)  =  P( Ê(H, S) falls on the side of the threshold that gives A )
+
+over repeated estimates. This substitutes **one** draw of `Ê` and reads off 0
+or 1 — the plug-in estimator, not the integral. Estimating the integral would
+mean re-running the grid many times per combo, which is not worth its cost at
+this stage; raising `iterations` shrinks the disagreement instead.
+
+**So combos near a threshold are the least trustworthy part of the posterior.**
+A holding within sampling error of the boundary could plausibly have gone
+either way, and this resolves it one way — sometimes against the hand the
+opponent actually holds. That band is a property of the method, not a defect.
 """
 
 from __future__ import annotations
@@ -33,7 +44,7 @@ import random
 from dataclasses import dataclass
 
 from ..calculations.equity import Combo, equity_grid
-from ..calculations.ranges import Range
+from ..calculations.ranges import Range, WeightedRange
 from ..domain.action import Action
 from ..domain.cards import Card, cards_to_str
 from ..domain.enums import ActionType, Street
@@ -106,8 +117,8 @@ class ConditionedRange:
         """True when every surviving combo takes the action every time.
 
         False means some survivors only sometimes act this way — a bluffing
-        branch — and the flat range below understates how much of the posterior
-        those hands should carry.
+        branch — so the posterior is genuinely uneven and :meth:`to_weighted`
+        is the only faithful way to hand it to the equity engine.
         """
 
         return all(weight >= 1.0 for weight in self.weights.values() if weight > 0)
@@ -118,7 +129,26 @@ class ConditionedRange:
         return ", ".join(cards_to_str(combo) for combo in self.combos)
 
     def to_range(self) -> Range:
+        """The support alone, every combo equally likely.
+
+        **Lossy whenever :attr:`is_certain` is False.** A maniac's flop betting
+        range is 821 value combos at weight 1.0 and 260 bluffs at 0.6; as a set
+        the bluffs are 24.1% of it and they should be 16.0%, which moved hero's
+        equity by 2.4 points — twice the margin of error the figure carried.
+        Use :meth:`to_weighted` for anything that computes.
+        """
+
         return Range(self.notation())
+
+    def to_weighted(self) -> WeightedRange:
+        """The posterior with its probabilities intact, for the equity engine.
+
+        This is the whole point of computing a likelihood. Conditioning derives
+        `P(H|A,S) ∝ P(A|H,S)·P(H|S)`; passing on only the support keeps the
+        proportionality and throws away the distribution.
+        """
+
+        return WeightedRange({c: w for c, w in self.weights.items() if w > 0})
 
     def describe(self) -> str:
         if not self.steps:
@@ -126,7 +156,10 @@ class ConditionedRange:
         chain = "; ".join(step.describe() for step in self.steps)
         line = f"conditioned on {chain}"
         if not self.is_certain:
-            line += " — weighted equally, though some only bluff here sometimes"
+            line += (
+                " — some of these only bluff here sometimes, and carry "
+                "proportionally less weight"
+            )
         return line
 
     def line(self) -> str:

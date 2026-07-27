@@ -11,7 +11,7 @@ import random
 
 import pytest
 
-from poker_coach.calculations.equity import _draw_joint, equity
+from poker_coach.calculations.equity import _Draw, _draw_joint, equity
 from poker_coach.calculations.ranges import Range
 from poker_coach.coaching.analysis import _is_terminal_call, analyze
 from poker_coach.domain import (
@@ -37,22 +37,46 @@ def test_multiway_ranges_are_sampled_uniformly_over_joint_assignments():
     sampler produced 0.496 / 0.252 / 0.252.
     """
 
-    p1 = Range("AsKs, 2c3c").combos()
-    p2 = Range("AsQs, AsJs, 2c4c").combos()
+    p1 = _Draw.build([(c, 1.0) for c in Range("AsKs, 2c3c").combos()])
+    p2 = _Draw.build([(c, 1.0) for c in Range("AsQs, AsJs, 2c4c").combos()])
 
+    counts, accepted = _joint_counts([p1, p2])
+    assert len(counts) == 3
+    for share in (v / accepted for v in counts.values()):
+        assert share == pytest.approx(1 / 3, abs=0.02)
+
+
+def _joint_counts(pools, draws: int = 30_000):
     rng = random.Random(0)
     counts: collections.Counter = collections.Counter()
     accepted = 0
-    for _ in range(30_000):
-        _, hands = _draw_joint([p1, p2], set(), rng)
+    for _ in range(draws):
+        _, hands = _draw_joint(pools, set(), rng)
         if hands is None:
             continue
         accepted += 1
         counts[tuple("".join(map(str, h)) for h in hands)] += 1
+    return counts, accepted
 
-    assert len(counts) == 3
-    for share in (v / accepted for v in counts.values()):
-        assert share == pytest.approx(1 / 3, abs=0.02)
+
+def test_weighted_pools_are_sampled_in_proportion_to_their_weights():
+    """The same oracle, with the pools no longer uniform.
+
+    Rejection still runs over the *joint* assignment, so the surviving
+    distribution is proportional to the product of the opponents' weights —
+    which is only the same as uniform when the weights are.
+    """
+
+    combos = Range("AsKs, 2c3c, 7h7d").combos()
+    assert len(combos) == 3
+    wanted = [1.0, 3.0, 6.0]
+    pool = _Draw.build(list(zip(combos, wanted)))
+
+    counts, accepted = _joint_counts([pool])
+    assert accepted == 30_000  # a single pool can never collide
+    for combo, weight in zip(combos, wanted):
+        key = ("".join(map(str, combo)),)
+        assert counts[key] / accepted == pytest.approx(weight / 10.0, abs=0.015), key
 
 
 def test_equity_does_not_depend_on_the_order_ranges_are_supplied():

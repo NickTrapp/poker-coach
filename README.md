@@ -204,8 +204,14 @@ Three things this is **not**:
 
 - It is a fact about the *policy*, not about a person. A real opponent is not
   this station, and the provenance line says so at every decision.
-- It is not exact. The likelihood is computed, but the equity ranking behind it
-  is sampled, so a holding within sampling error of a threshold can fall either
+- It is a **distribution**, not a set. An opponent that bluffs 60% of the time
+  holds its bluffs at less weight than its value hands, and the equity engine
+  measures against the weighted posterior. Flattening it to "which combos are
+  in" put a maniac's bluffs at 24.1% of its betting range instead of 16.0% —
+  worth 2.4 equity points, twice the margin of error the figure carried.
+- It is not exact. The likelihood is a *plug-in* estimate: the policy's branch
+  is deterministic given an equity estimate, but it gets that estimate from
+  Monte Carlo, so the equity ranking behind it is sampled, so a holding within sampling error of a threshold can fall either
   way. On the turn and river the equity itself *is* exact — the range is a
   finite combo list, so there is nothing to sample — but it is exact arithmetic
   on an uncertain input, and the heading says so rather than claiming the
