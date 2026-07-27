@@ -80,6 +80,11 @@ def _build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--iterations", type=int, default=6000)
     pr.add_argument("--log-dir", default="practice",
                     help="Where to write the session JSONL. '' disables.")
+    pr.add_argument(
+        "--fixed-range", action="store_true",
+        help="Use one configured range for the whole hand instead of "
+             "narrowing it by the actions the opponent takes.",
+    )
 
     rv = sub.add_parser(
         "review",
@@ -182,6 +187,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             hands=args.hands, opponent=args.opponent, model=model,
             seed=args.seed, stdin=sys.stdin, stdout=sys.stdout,
             log_dir=args.log_dir or None, iterations=args.iterations,
+            condition_on_action=not args.fixed_range,
         )
         return 0
 

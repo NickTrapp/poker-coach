@@ -98,17 +98,69 @@ class RuleBasedPlayer:
         if not player.can_act:
             raise ValueError(f"{self.name} cannot act (folded or all-in)")
 
+        facing_bet = state.amount_to_call(self.name) > 0
+        equity = self._equity(state, player.hole_cards, facing_bet=facing_bet)
+        return self.decide(state, equity)
+
+    def decide(self, state: HandState, equity: float) -> Action:
+        """The policy itself, given an equity read.
+
+        Split out from :meth:`act` so range conditioning can ask *this* policy
+        what a hypothetical combo would do, using a precomputed equity, instead
+        of maintaining a second copy of the decision rules. Two copies of a rule
+        drift; this project has the scars.
+        """
+
+        player = state.player(self.name)
         to_call = state.amount_to_call(self.name)
         facing_bet = to_call > 0
 
         if state.street is Street.PREFLOP and not self._opens(player.hole_cards):
             return self._fold_or_check(facing_bet, state.street)
 
-        equity = self._equity(state, player.hole_cards, facing_bet=facing_bet)
-
         if facing_bet:
             return self._respond_to_bet(state, equity, to_call)
         return self._open_action(state, equity)
+
+    def action_probability(
+        self, state: HandState, equity: float, taken: ActionType
+    ) -> float:
+        """How often this policy takes ``taken`` with that equity read.
+
+        Every branch is deterministic except one: betting an unbet pot with a
+        hand below the value threshold happens with probability
+        ``bluff_frequency``. So the answer is 0, 1, or that frequency — computed
+        rather than estimated by repeated sampling, which keeps the posterior
+        from being brittle near the boundary.
+        """
+
+        player = state.player(self.name)
+        to_call = state.amount_to_call(self.name)
+        facing_bet = to_call > 0
+
+        # A hand outside the opening range never puts money in preflop.
+        if state.street is Street.PREFLOP and not self._opens(player.hole_cards):
+            expected = ActionType.FOLD if facing_bet else ActionType.CHECK
+            return 1.0 if taken is expected else 0.0
+
+        if facing_bet:
+            return 1.0 if self._respond_to_bet(state, equity, to_call).type is taken else 0.0
+
+        # Unbet pot: the value branch is certain, the bluff branch is not.
+        aggressive = (
+            ActionType.RAISE if state.current_bet > 0 else ActionType.BET
+        )
+        if equity >= self.style.bet_threshold:
+            return 1.0 if taken is aggressive else 0.0
+
+        bluff = self.style.bluff_frequency
+        if not self._may(state, aggressive):
+            bluff = 0.0
+        if taken is aggressive:
+            return bluff
+        if taken is ActionType.CHECK:
+            return 1.0 - bluff
+        return 0.0
 
     # ---------------------------------------------------------------- policy
 

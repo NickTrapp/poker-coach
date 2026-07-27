@@ -158,6 +158,15 @@ Simulated play only breaks in volume: the bugs found so far needed 300, 500 and
 1500 hands to surface. Run `stress_hands.py` after touching the runner or the
 player policy — no single-hand test substitutes.
 
+**Enumeration is gated on total deals, not on runouts.** A range is a finite
+set of combos, so `combos x runouts` is the cost — and a river spot against a
+range is *always* enumerable. Gating on runouts alone made those spots sample:
+a margin of error quoted on a quantity that has none, and slower than the exact
+answer (379 combos evaluate in 3ms where 6,000 samples take 168ms). Multiway,
+assignments where two opponents hold the same card are skipped, never repaired
+by re-drawing one opponent — that is the same non-uniformity `_draw_joint`
+guards against on the sampling side.
+
 Do not "fix" an equity number by adjusting a test expectation. Published
 per-class preflop equities are rounded and suit-generic; exact enumeration is
 the authority.
@@ -238,6 +247,58 @@ and assert: chips are conserved, awards sum to the pot, the history replays to
 the same pot, results are zero-sum, and nobody wins more than they could cover.
 Single-hand tests miss all of these.
 
+## Range conditioning
+
+`players/conditioning.py` inverts an archetype: given the action it took, which
+holdings would take it? `P(H|A,S) ∝ P(A|H,S)·P(H|S)`, and the likelihood — the
+term nobody normally has — is *computable* here because the opponent is an
+explicit policy rather than a person.
+
+Four rules:
+
+- **Ask the policy; never re-derive it.** `RuleBasedPlayer.decide` and
+  `action_probability` exist so conditioning consults the same rules the
+  simulator plays. A second copy of the policy would drift, and this project has
+  the scars.
+- **Likelihoods multiply; chain, do not restart.** Pass a `ConditionedRange`
+  back in as the prior. Chaining through `to_range()` flattens the weights and
+  silently promotes a bluffing branch to full weight.
+- **The prior is "random".** The dealer hands the opponent any two cards, and
+  the archetype's preflop range gate is part of the policy, so conditioning
+  *recovers* the open range rather than assuming it. Assuming it can contradict
+  it — `DEFAULT_RANGES["station"]` and `STATION.open_range` differ by `96s+`.
+- **A posterior derived from a policy is a fact about the policy.** It says what
+  this configured station would hold, not what a person would. Say so wherever
+  it surfaces.
+
+**The likelihood is a plug-in estimate, not the exact quantity.** The policy's
+branch is deterministic *conditional on an equity estimate*, but the policy
+gets that estimate from Monte Carlo and thresholds it — so unconditionally the
+action is random over the policy's own sampling. `P(A|H,S)` is really
+`P(Ê(H,S) lands on the side giving A)`; this takes one draw of `Ê` and reads
+off 0 or 1. Do not describe it as exact. Combos within sampling error of a
+threshold resolve arbitrarily, sometimes against the hand the opponent actually
+holds. `tests/players/test_conditioning.py` checks structure exactly and
+agreement tolerantly, on purpose.
+
+**Weights are the posterior; the support is not.** `to_range()` keeps only
+which combos survived and is lossy the moment the policy bluffs.
+`to_weighted()` returns a `WeightedRange`, and that is what every calculation
+must consume — `RangeAssumption.for_equity`, never `.range`. Flattening a
+maniac's flop betting range put its bluffs at 24.1% of the range instead of
+16.0% and moved hero's equity 2.4 points, twice the margin of error the figure
+was quoted with. Three of the five archetypes bluff; a station does not, which
+is exactly why the bug could ship unnoticed.
+
+An emptied posterior is real, not a bug: the opponent can hold a hand outside
+the prior, and the grid can disagree with the sample the policy decided from.
+Fall back to the last good range and say conditioning stopped — an empty range
+has no equity, and reverting quietly hides the disagreement.
+
+`equity_grid()` is what makes this affordable: one villain hand and one runout
+per iteration, shared across every hero combo. Around 1s for a 400-combo grid
+against 5.3s for the naive loop.
+
 ## Practice mode
 
 `practice/` orchestrates everything else. Two rules it must keep:
@@ -245,11 +306,13 @@ Single-hand tests miss all of these.
 - **A human is just another `Player`.** `PracticeSession` drives
   `players.table.play_hand` with a `CallbackPlayer`; it does not re-implement a
   betting round. Anything else reintroduces the two-copies-drift bug.
-- **The range is configuration, never inference.** `PracticeConfig.range_for()`
-  returns a `RangeAssumption` the caller set. Nothing derives what the opponent
-  holds from how the archetype behaves — that needs a strategy model this
-  package does not have. Deriving one from the policy (simulate how each combo
-  acts in the spot) is the natural next step and is *not* built.
+- **The range is derived from the policy, or it is configuration — never a
+  guess.** `players/conditioning.py` narrows the opponent's range by asking its
+  own policy which holdings take the observed action. That is legitimate only
+  because the opponent *is* an explicit policy; a posterior derived this way is
+  a fact about that policy, not about a person, and the provenance line says so
+  every time. `PracticeConfig.range_for()` still returns the fixed configured
+  range when `condition_on_action=False`.
 
 Feedback is three-way split: `verified` (deterministic calculations, no model),
 `interpretation` (the model's read), `unresolved` (the OPEN facts). Only the
@@ -257,12 +320,33 @@ middle one needs a model, which is what makes the fallback honest. Never merge
 them into one block — a student reads undifferentiated prose with uniform
 confidence, which is the failure this project guards against on the model side.
 
-**Deterministic is not exact.** The `verified` heading is conditional on
-`analysis.equity.exact`: sampled equity makes every figure derived from it an
-estimate, including a terminal call's EV. The tree being terminal says nothing
-about the precision of the equity feeding it. Never label a sampled figure
-"exact" — that is the same confidence-boundary error the fact categories exist
+**Deterministic is not exact, and the boundary keeps moving up.** The `verified`
+heading depends on *two* flags, not one:
+
+- `analysis.equity.exact` — sampled equity makes every figure derived from it an
+  estimate, including a terminal call's EV. The tree being terminal says nothing
+  about the precision of the equity feeding it.
+- `range_assumption.sampled` — a *conditioned* range was itself narrowed by
+  Monte Carlo, so a river enumeration against it is exact arithmetic on an
+  uncertain input. `equity.exact` is `True` there and the figure is still not
+  deterministic.
+
+The pattern generalises: each time a layer consumes something inexact, the
+confidence label has to be recomputed, never inherited. Never label a sampled
+figure "exact" — that is the confidence-boundary error the fact categories exist
 to prevent, and it is worse here because this layer faces the student.
+
+**Conditioning and provenance are separate claims.** `RangeConditioning` says
+*what the range is conditioned on*; `RangeAssumption.provenance` says *who
+decided it*. A read the caller typed in and a posterior computed from a known
+policy are both `action-conditioned` and deserve very different trust. The
+`ACTION_CONDITIONED` caveat used to assert "an assumed read, not derived",
+which made the two indistinguishable and became false the moment derivation
+existed.
+
+`AnalysisFact.render()` must keep emitting `provenance`. It carried the field
+and dropped it on render for several releases, so "exact enumeration" and
+"Monte Carlo, 6,000 samples" reached the model as the same string.
 
 Grounding failure does **not** block. One repair request quoting the failed
 claims, then withhold the prose and show the arithmetic with a warning. The

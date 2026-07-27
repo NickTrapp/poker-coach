@@ -93,9 +93,20 @@ class AnalysisFact:
     scope: str | None = None
 
     def render(self) -> str:
-        """One line, with assumptions and scope inline."""
+        """One line, with provenance, assumptions and scope inline.
+
+        Provenance is rendered because it is the difference between "56.9% by
+        exact enumeration" and "56.9%, sampled" — two figures that look
+        identical and warrant different confidence. It was carried on the
+        dataclass but dropped here, so the model saw only the category heading;
+        that made "supplied by the caller" and "derived from the opponent's
+        policy" indistinguishable, which is precisely the distinction a range
+        assumption exists to make.
+        """
 
         line = f"{self.key}: {self.rendered_value}"
+        if self.provenance:
+            line += f" [source: {self.provenance}]"
         if self.assumptions:
             line += f" [assumes: {'; '.join(self.assumptions)}]"
         if self.scope:

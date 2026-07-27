@@ -295,6 +295,13 @@ def grounded_values(analysis: SpotAnalysis) -> tuple[set[float], set[float]]:
     if features.overcards:
         numbers.add(float(len(features.overcards)))
 
+    # Combo counts from range conditioning ("192 of 384"), when there was any.
+    assumption = analysis.range_assumption
+    if assumption.combos is not None:
+        numbers.add(float(assumption.combos))
+    if assumption.combos_before is not None:
+        numbers.add(float(assumption.combos_before))
+
     if analysis.spr != float("inf"):
         numbers.add(analysis.spr)
     if odds.ratio != float("inf"):
@@ -316,10 +323,17 @@ def grounded_values(analysis: SpotAnalysis) -> tuple[set[float], set[float]]:
 def _known_notation(analysis: SpotAnalysis) -> list[str]:
     """Notation strings the spot itself supplied, longest first when masking."""
 
-    tokens = [analysis.villain_range, analysis.board, analysis.hero_cards]
+    # `villain_range` is what the equity engine used; `display` is what the
+    # model actually read, and with a conditioned range those differ — the
+    # notation becomes an explicit combo list while the prose keeps the
+    # original range string. Mask both, or the range the model was shown gets
+    # scanned for numbers it never claimed.
+    ranges = [analysis.villain_range, analysis.range_assumption.display]
+    tokens = [*ranges, analysis.board, analysis.hero_cards]
     # A range is a comma-separated list; mask the whole line and each element,
     # so a response that cites only part of it is still handled.
-    tokens += [part.strip() for part in analysis.villain_range.split(",")]
+    for notation in ranges:
+        tokens += [part.strip() for part in notation.split(",")]
     return [t for t in tokens if t]
 
 

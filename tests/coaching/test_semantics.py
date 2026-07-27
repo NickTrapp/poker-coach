@@ -134,11 +134,68 @@ def test_a_call_that_puts_villain_all_in_is_terminal():
     assert a.ev_is_terminal is True
 
 
-def test_terminal_ev_is_labelled_exact():
-    a = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0)
+def test_a_terminal_call_against_a_fixed_range_earns_the_strong_wording():
+    """River, enumerated equity, caller-supplied range: nothing is estimated."""
+
+    a = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0,
+                 villain_range="22+, A2s+, K9s+")
+    assert a.equity.exact
+    assert not a.range_assumption.sampled
+
     f = fact(a, "EV of calling")
-    assert "exact for a terminal call" in f.provenance
     assert "if equity were fully realised" not in f.key
+    assert "exact under the stated fixed range" in f.provenance
+    assert "terminal decision tree" in f.provenance
+
+
+def test_a_terminal_call_on_sampled_equity_is_not_called_exact():
+    """A flop call that puts hero all-in is terminal and *estimated*.
+
+    "Terminal" is a claim about the decision tree — no betting follows — not
+    about the precision of the equity feeding it. Since provenance now reaches
+    the prompt, an unconditional "exact for a terminal call" told the model in
+    so many words that a Monte Carlo figure was certain.
+    """
+
+    a = analysed(hero_stack=6.0, villain_stack=200.0, bet=6.0)
+    assert a.ev_is_terminal is True
+    assert not a.equity.exact
+
+    f = fact(a, "EV of calling")
+    assert "exact" not in f.provenance
+    assert "terminal decision tree" in f.provenance
+    assert "Monte Carlo" in f.provenance
+    assert str(a.equity.samples) in f.provenance.replace(",", "")
+
+
+def test_a_terminal_call_against_a_sampled_range_says_which_part_is_exact():
+    """Exact arithmetic on an uncertain input. Both halves have to be said."""
+
+    a = analysed(
+        board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0,
+        villain_range=RangeAssumption(
+            "22+, A2s+, K9s+",
+            RangeConditioning.ACTION_CONDITIONED,
+            label="a derived read", sampled=True,
+        ),
+    )
+    assert a.equity.exact
+    assert a.range_assumption.sampled
+
+    f = fact(a, "EV of calling")
+    assert "terminal decision tree" in f.provenance
+    assert "narrowed by simulation" in f.provenance
+    # The equity fact has to make the same distinction, or the two disagree.
+    assert "narrowed by simulation" in fact(a, "Hero equity").provenance
+
+
+def test_the_equity_fact_never_calls_a_sampled_range_plain_enumeration():
+    exact_range = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0,
+                           villain_range="22+, A2s+, K9s+")
+    assert fact(exact_range, "Hero equity").provenance == "exact enumeration"
+
+    sampled_equity = analysed()
+    assert "Monte Carlo" in fact(sampled_equity, "Hero equity").provenance
 
 
 def test_non_terminal_ev_is_labelled_as_an_upper_bound():
@@ -203,11 +260,76 @@ def test_a_pre_action_range_is_flagged_as_not_the_betting_range():
     assert "not the range they take this action with" in text
 
 
-def test_an_action_conditioned_range_is_labelled_a_read():
+def test_an_action_conditioned_range_says_it_is_given_the_action():
     a = analysed(conditioning=RangeConditioning.ACTION_CONDITIONED, villain_range="AA")
     text = fact(a, "Assumed villain range").render()
     assert "action-conditioned" in text
-    assert "assumed read, not derived" in text
+    assert "GIVEN the observed action" in text
+
+
+def test_conditioning_and_provenance_are_separate_claims():
+    """A caller's read and a derived posterior can both be action-conditioned.
+
+    The conditioning says *what the range is conditioned on*; the provenance
+    says *who decided it*. Collapsing them into one string — as the caveat once
+    did, by asserting an action-conditioned range was "not derived" — makes a
+    posterior computed from a known policy indistinguishable from a guess the
+    caller typed in.
+    """
+
+    typed_in = analysed(
+        conditioning=RangeConditioning.ACTION_CONDITIONED, villain_range="AA"
+    )
+    derived = analysed(
+        conditioning=RangeConditioning.ACTION_CONDITIONED,
+        villain_range=RangeAssumption(
+            "AA", RangeConditioning.ACTION_CONDITIONED,
+            provenance="derived from the opponent's policy",
+        ),
+    )
+
+    same = fact(typed_in, "Assumed villain range").assumptions
+    assert same == fact(derived, "Assumed villain range").assumptions
+    assert "not derived" in fact(typed_in, "Assumed villain range").render()
+    assert "derived from the opponent's policy" in (
+        fact(derived, "Assumed villain range").render()
+    )
+
+
+def test_provenance_reaches_the_rendered_fact():
+    """It is carried on every fact and was, for a while, rendered on none.
+
+    A sampled equity and an enumerated one print the same digits. Without the
+    source line the model sees only the category heading, so the distinction
+    the categories exist to draw stops at the prompt boundary.
+    """
+
+    a = analysed()
+    equity_fact = fact(a, "Hero equity")
+    assert equity_fact.provenance
+    assert equity_fact.provenance in equity_fact.render()
+
+
+def test_a_conditioned_range_reports_how_much_it_ruled_out():
+    a = analysed(
+        villain_range=RangeAssumption(
+            "AA", RangeConditioning.ACTION_CONDITIONED,
+            label="the part of 22+ that a station bets here",
+            combos=6, combos_before=384,
+        )
+    )
+    narrowing = fact(a, "Villain combos consistent with this line")
+    assert narrowing.rendered_value == "6 of 384"
+    # The combo dump never reaches the prose; the label stands in for it.
+    assert "the part of 22+" in fact(a, "Assumed villain range").rendered_value
+    # ...but every calculation still runs on the real notation.
+    assert a.villain_range == "AA"
+
+
+def test_an_unconditioned_range_reports_no_narrowing():
+    a = analysed()
+    assert a.range_assumption.narrowing is None
+    assert not any("consistent with this line" in f.key for f in a.facts)
 
 
 def test_villains_betting_range_is_open_unless_conditioned():

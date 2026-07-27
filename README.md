@@ -176,16 +176,59 @@ from it inherits that sampling error, and the heading says so. A terminal call
 has an exact decision *tree* — no betting follows — but its EV is still an
 estimate if the equity feeding it was one.
 
-**The range is configuration, not a read.** Choosing "station" tells the
-simulator how the opponent *acts*; it does not tell the coach what that
-opponent *holds* having acted. Deriving that needs a strategy model this
-package does not have, so the assumption is stated everywhere it appears:
+### The opponent's range moves with its actions
+
+Normally, turning "this player is a station" into "here is what it holds having
+bet the flop" needs a strategy model — so the range would have to stay a fixed
+assumption. But the opponent here is not a person, it is an **explicit policy**,
+so the coach can ask it directly: put each possible holding in its seat and see
+whether it takes the action it took.
 
 ```
-Range assumption  : 22+, A2s+, K2s+, Q6s+, ...
-Conditioning      : pre-action
-Source            : fixed practice configuration, not inferred from play
+  villain's range: 194 of 1225 combos (check preflop, then bet on the flop)
+  equity vs the assumed range: 14.5% (±2.4)
 ```
+
+Ace-high on `6c8c3h` is worth 58% before the opponent acts and **14.5%** after
+its flop bet is folded in. A fixed pre-action range would have quoted the first
+number for a decision that only exists because of the second.
+
+Each action narrows what the last one left, and the counts say how much:
+
+```
+  flop   194 of 1225 combos (check preflop, then bet on the flop)
+  turn   101 of 1225 combos (..., then bet on the turn)
+```
+
+Three things this is **not**:
+
+- It is a fact about the *policy*, not about a person. A real opponent is not
+  this station, and the provenance line says so at every decision.
+- It is a **distribution**, not a set. An opponent that bluffs 60% of the time
+  holds its bluffs at less weight than its value hands, and the equity engine
+  measures against the weighted posterior. Flattening it to "which combos are
+  in" put a maniac's bluffs at 24.1% of its betting range instead of 16.0% —
+  worth 2.4 equity points, twice the margin of error the figure carried.
+- It is not exact. The likelihood is a *plug-in* estimate: the policy's branch
+  is deterministic given an equity estimate, but it gets that estimate from
+  Monte Carlo, so the equity ranking behind it is sampled, so a holding within sampling error of a threshold can fall either
+  way. Every river spot and most turn spots enumerate the equity itself — the
+  range is a finite combo list, so there is nothing to sample — though a wide
+  enough turn range still exceeds the enumeration limit and falls back to Monte
+  Carlo. Either way it is arithmetic on an uncertain input, and the heading
+  says so rather than calling the figure deterministic.
+- It is not always available. If no holding left in the range takes the action
+  the opponent just took, conditioning stops, the last good range stands, and
+  the fallback is reported rather than hidden.
+
+```
+Range assumption  : starts at random, narrowed by each action
+Conditioning      : action-conditioned
+Source            : the simulated station's own policy — true of it, not of a person
+```
+
+Pass `--fixed-range` for the older behaviour: one configured range, labelled
+pre-action, never inferred from play.
 
 If the coach cites a number it wasn't given, it gets one repair request quoting
 the exact failed claims. If it fails again its prose is withheld and the

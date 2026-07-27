@@ -12,11 +12,19 @@ Three semantics worth stating up front, all of them previously implicit:
 computed here evaluates raising. A positive number means continuing beats
 folding; it says nothing about whether calling is the *best* continuation.
 
-**Call EV is exact only on a terminal call.** On the river, or when the call
-puts someone all-in, ``equity * pot - (1 - equity) * to_call`` is the real
-number. Anywhere else it silently assumes the hand checks down and hero
-realises every point of equity — no future bets faced, no folds, no
-implied odds. Those spots are labelled and the assumption is printed.
+**A terminal call has an exact decision tree, which is not the same as an exact
+number.** On the river, or when the call puts someone all-in,
+``equity * pot - (1 - equity) * to_call`` is the whole story: no betting
+follows, so nothing is being assumed away. Anywhere else it silently assumes
+the hand checks down and hero realises every point of equity — no future bets
+faced, no folds, no implied odds — and those spots are labelled an upper bound
+with the assumption printed.
+
+But "terminal" describes the *tree*, never the precision of the equity feeding
+it. A flop call that puts hero all-in is terminal and its equity is sampled; a
+river call against a conditioned range is exact arithmetic on an input that was
+narrowed by simulation. `_terminal_ev_provenance` reports whichever of the
+three cases holds, because provenance reaches the prompt verbatim.
 
 **A range must say what it is conditioned on.** "Villain's opening range" and
 "the range villain bets this flop with" are different distributions that
@@ -42,7 +50,7 @@ from ..calculations.pot_odds import (
     minimum_defence_frequency,
     pot_odds,
 )
-from ..calculations.ranges import Range
+from ..calculations.ranges import Range, WeightedRange
 from ..domain.cards import cards_to_str
 from ..domain.enums import Street
 from ..domain.state import HandState
@@ -67,8 +75,9 @@ class RangeConditioning(str, Enum):
     price a bet overstates hero's equity whenever villain bets a subset."""
 
     ACTION_CONDITIONED = "action-conditioned"
-    """The range villain is assumed to hold *given* the observed action. Still
-    an assumption — it is a read, not a derivation."""
+    """The range villain is credited with *given* the observed action. Says
+    nothing about where it came from — see :attr:`RangeAssumption.provenance`,
+    which is a separate question and carries most of the trust."""
 
     UNSPECIFIED = "unspecified"
     """The caller did not say. Treated as pre-action, and flagged as such."""
@@ -84,7 +93,8 @@ _CONDITIONING_CAVEATS: dict[RangeConditioning, str] = {
         "take this action with"
     ),
     RangeConditioning.ACTION_CONDITIONED: (
-        "assumed range GIVEN the observed action; an assumed read, not derived"
+        "villain's range GIVEN the observed action, not the range they held "
+        "before it"
     ),
     RangeConditioning.UNSPECIFIED: (
         "conditioning not stated by the caller; treat as a pre-action range"
@@ -94,17 +104,79 @@ _CONDITIONING_CAVEATS: dict[RangeConditioning, str] = {
 
 @dataclass(frozen=True, slots=True)
 class RangeAssumption:
-    """A villain range together with what it is conditioned on."""
+    """A villain range, what it is conditioned on, and where it came from."""
 
     notation: str
     conditioning: RangeConditioning = RangeConditioning.UNSPECIFIED
+    #: A readable stand-in for :attr:`notation`, shown wherever the range is
+    #: displayed. A posterior is an explicit list of hundreds of combos: exactly
+    #: what the equity engine needs and exactly what nobody can read. Only the
+    #: prose uses this; calculations go through :attr:`for_equity`.
+    #:
+    #: It must contain no digits that are not part of a card or range token —
+    #: it lands in prompt prose, which the grounding checker scans for numbers
+    #: the model was never given.
+    label: str | None = None
+    #: *Who decided this range* — a different question from what it is
+    #: conditioned on, and the one that carries most of the trust. A read the
+    #: caller typed in and a posterior derived from a known policy can both be
+    #: action-conditioned while deserving very different confidence.
+    provenance: str = "supplied by the caller, not derived"
+    #: How many combos survived conditioning, and how many were possible before
+    #: it. Both or neither. Stated as a fact rather than left implicit in the
+    #: notation, because "villain got narrower" is the whole point of
+    #: conditioning and a student cannot see it from a range string.
+    combos: int | None = None
+    combos_before: int | None = None
+    #: The opponent actions this range is conditioned on, in words
+    #: ("check preflop, then bet on the flop"). Kept apart from :attr:`label` so
+    #: a display can show the line without the surrounding phrasing. Countless,
+    #: for the same reason as the label.
+    observed_line: str | None = None
+    #: The posterior with its probabilities intact. Kept apart from
+    #: :attr:`notation`, which is only the *support*: a range string says which
+    #: combos are in, never that one is four times likelier than another. Every
+    #: equity figure measures against this when it is present.
+    weighted: WeightedRange | None = None
+    #: True when the range itself was derived by simulation, so it carries error
+    #: of its own. Independent of whether the *equity* was enumerated: a river
+    #: enumeration against a sampled range is exact arithmetic on an uncertain
+    #: input, and calling the result deterministic is the same
+    #: confidence-boundary mistake as calling a terminal call's EV exact when
+    #: the equity feeding it was sampled.
+    sampled: bool = False
+
+    @property
+    def narrowing(self) -> str | None:
+        if self.combos is None or self.combos_before is None:
+            return None
+        return f"{self.combos} of {self.combos_before}"
 
     @property
     def range(self) -> Range:
+        """The support, every combo equally likely. For display and blockers."""
+
         return Range(self.notation)
 
+    @property
+    def for_equity(self) -> Range | WeightedRange:
+        """What a calculation must measure against.
+
+        The weighted posterior when there is one. Using :attr:`range` instead
+        silently flattens it — for a maniac that moved hero's equity by 2.4
+        points, twice the margin of error the figure was quoted with.
+        """
+
+        return self.weighted if self.weighted is not None else self.range
+
+    @property
+    def display(self) -> str:
+        """What a human should be shown. Never a raw combo dump."""
+
+        return self.label or self.notation
+
     def __str__(self) -> str:
-        return self.notation
+        return self.display
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +300,54 @@ def _is_terminal_call(state: HandState, hero: str, to_call: float) -> bool:
     )
 
 
+def _equity_provenance(
+    equity_result: EquityResult, assumption: RangeAssumption
+) -> str:
+    """Where an equity figure gets its certainty — from *both* directions.
+
+    Two independent sources of error, and a figure is only as exact as the
+    weaker of them:
+
+    * whether the equity was enumerated or sampled, and
+    * whether the **range** it was measured against was itself derived by
+      simulation. A river enumeration against a conditioned range is exact
+      arithmetic on an uncertain input.
+
+    Neither implies the other, so neither may be inherited. This is the same
+    boundary the fact categories exist to police, one level up.
+    """
+
+    if not equity_result.exact:
+        return f"Monte Carlo, {equity_result.samples:,} samples"
+    if assumption.sampled:
+        return "exact enumeration, against a range narrowed by simulation"
+    return "exact enumeration"
+
+
+def _terminal_ev_provenance(
+    equity_result: EquityResult, assumption: RangeAssumption
+) -> str:
+    """Provenance for a terminal call's EV.
+
+    "Terminal" is a claim about the *decision tree* — no betting follows, so
+    ``equity * pot - (1 - equity) * to_call`` is the whole story. It is not a
+    claim about the precision of the equity feeding it. A flop call that puts
+    hero all-in is terminal and its equity is sampled; the unconditional
+    "exact for a terminal call" told the model otherwise, and since provenance
+    now reaches the prompt it told it in so many words.
+    """
+
+    tree = "terminal decision tree — no betting follows"
+    if not equity_result.exact:
+        return (
+            f"{tree}; computed from Monte Carlo equity, "
+            f"{equity_result.samples:,} samples"
+        )
+    if assumption.sampled:
+        return f"{tree}; exact arithmetic against a range narrowed by simulation"
+    return f"exact under the stated fixed range; {tree}"
+
+
 def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
     """Assemble the fact list, each carrying its own semantics."""
 
@@ -337,12 +457,12 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
             str(equity_result),
             equity_category,
             assumptions=(
-                f"villain holds exactly: {assumption.notation}",
+                f"villain holds exactly: {assumption.display}",
                 assumption.conditioning.caveat,
+                assumption.provenance,
                 "all remaining cards are dealt with no further betting",
             ),
-            provenance="exact enumeration" if equity_result.exact
-            else f"Monte Carlo, {equity_result.samples:,} samples",
+            provenance=_equity_provenance(equity_result, assumption),
             scope="share of the pot at showdown; NOT the share hero actually "
                   "realises once future betting is accounted for",
         )
@@ -351,12 +471,25 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
     facts.append(
         AnalysisFact(
             "Assumed villain range",
-            f"{assumption.notation} ({assumption.conditioning.value})",
+            f"{assumption.display} ({assumption.conditioning.value})",
             FactCategory.ASSUMED,
             assumptions=(assumption.conditioning.caveat,),
-            provenance="supplied by the caller, not derived",
+            provenance=assumption.provenance,
         )
     )
+
+    if assumption.narrowing is not None:
+        facts.append(
+            AnalysisFact(
+                "Villain combos consistent with this line",
+                assumption.narrowing,
+                FactCategory.ASSUMED,
+                assumptions=(assumption.provenance,),
+                scope="how much of the starting range the observed action "
+                      "rules out; every equity figure above is against what "
+                      "is left",
+            )
+        )
 
     # --- the EV figure, labelled by whether it is actually exact ------------
     if facing_bet:
@@ -366,8 +499,10 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                     "EV of calling vs folding",
                     f"{a['ev_call_vs_fold']:+.2f} chips",
                     FactCategory.ASSUMED,
-                    assumptions=(f"villain holds exactly: {assumption.notation}",),
-                    provenance="exact for a terminal call — no betting follows",
+                    assumptions=(f"villain holds exactly: {assumption.display}",),
+                    provenance=_terminal_ev_provenance(
+                        equity_result, assumption
+                    ),
                     scope="compares CALLING with FOLDING only; it does not "
                           "evaluate raising",
                 )
@@ -379,7 +514,7 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                     f"{a['ev_call_vs_fold']:+.2f} chips",
                     FactCategory.ASSUMED,
                     assumptions=(
-                        f"villain holds exactly: {assumption.notation}",
+                        f"villain holds exactly: {assumption.display}",
                         "the hand is checked down from here — NO further betting",
                         # Deliberately no bare percentage here: the facts block
                         # must ground itself, and a stray "100%" reads as a
@@ -563,7 +698,7 @@ def analyze(
 
     eq = equity(
         player.hole_cards,
-        assumption.range,
+        assumption.for_equity,
         state.board,
         iterations=iterations,
         rng=rng_obj,

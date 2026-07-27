@@ -50,6 +50,12 @@ class Feedback:
     #: than sampled. Drives the heading, which must not claim exactness the
     #: numbers underneath do not have.
     equity_exact: bool = True
+    #: True when the *range* the equity was measured against was itself derived
+    #: by simulation. Separate from `equity_exact`, and it has to be: a river
+    #: enumeration against a sampled posterior is exact arithmetic on an
+    #: uncertain input, and "deterministically computed" reads as a promise the
+    #: figure cannot keep.
+    range_sampled: bool = False
     interpretation: str | None = None
     grounding: GroundingReport | None = None
     repair_attempted: bool = False
@@ -65,12 +71,21 @@ class Feedback:
         blocks: list[str] = []
 
         if self.verified:
-            qualifier = (
-                "Deterministically computed under the stated assumptions."
-                if self.equity_exact
-                else "Deterministically computed from a sampled equity "
-                     "estimate; respect the stated margin of error."
-            )
+            if not self.equity_exact:
+                qualifier = (
+                    "Deterministically computed from a sampled equity "
+                    "estimate; respect the stated margin of error."
+                )
+            elif self.range_sampled:
+                qualifier = (
+                    "Exact against the range shown — but that range was itself "
+                    "narrowed by simulation, so it carries error these figures "
+                    "do not display."
+                )
+            else:
+                qualifier = (
+                    "Deterministically computed under the stated assumptions."
+                )
             blocks.append(
                 "VERIFIED CALCULATIONS\n"
                 f"({qualifier})\n"
@@ -127,6 +142,16 @@ def verified_lines(
 
     lines: list[str] = []
     equity = analysis.equity
+    assumption = analysis.range_assumption
+
+    # "vs the assumed range" is doing a lot of unnamed work once the range moves
+    # with the action, so say which range, and how much of it the line ruled out.
+    if assumption.narrowing is not None:
+        lines.append(
+            f"Villain's range: {assumption.display} — {assumption.narrowing} "
+            f"combos. Read off the simulated opponent's own policy, so it is "
+            f"true of that policy and not of a person."
+        )
 
     provenance = (
         "exact enumeration" if equity.exact
@@ -210,6 +235,7 @@ def build_feedback(
         verified=verified_lines(analysis, action_taken, action_type),
         unresolved=unresolved_lines(analysis),
         equity_exact=analysis.equity.exact,
+        range_sampled=analysis.range_assumption.sampled,
         interpretation=interpretation,
         grounding=grounding,
         repair_attempted=repair_attempted,
