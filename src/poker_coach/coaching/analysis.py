@@ -12,11 +12,19 @@ Three semantics worth stating up front, all of them previously implicit:
 computed here evaluates raising. A positive number means continuing beats
 folding; it says nothing about whether calling is the *best* continuation.
 
-**Call EV is exact only on a terminal call.** On the river, or when the call
-puts someone all-in, ``equity * pot - (1 - equity) * to_call`` is the real
-number. Anywhere else it silently assumes the hand checks down and hero
-realises every point of equity — no future bets faced, no folds, no
-implied odds. Those spots are labelled and the assumption is printed.
+**A terminal call has an exact decision tree, which is not the same as an exact
+number.** On the river, or when the call puts someone all-in,
+``equity * pot - (1 - equity) * to_call`` is the whole story: no betting
+follows, so nothing is being assumed away. Anywhere else it silently assumes
+the hand checks down and hero realises every point of equity — no future bets
+faced, no folds, no implied odds — and those spots are labelled an upper bound
+with the assumption printed.
+
+But "terminal" describes the *tree*, never the precision of the equity feeding
+it. A flop call that puts hero all-in is terminal and its equity is sampled; a
+river call against a conditioned range is exact arithmetic on an input that was
+narrowed by simulation. `_terminal_ev_provenance` reports whichever of the
+three cases holds, because provenance reaches the prompt verbatim.
 
 **A range must say what it is conditioned on.** "Villain's opening range" and
 "the range villain bets this flop with" are different distributions that
@@ -102,8 +110,8 @@ class RangeAssumption:
     conditioning: RangeConditioning = RangeConditioning.UNSPECIFIED
     #: A readable stand-in for :attr:`notation`, shown wherever the range is
     #: displayed. A posterior is an explicit list of hundreds of combos: exactly
-    #: what the equity engine needs and exactly what nobody can read. Every
-    #: calculation still uses ``notation``; only the prose uses this.
+    #: what the equity engine needs and exactly what nobody can read. Only the
+    #: prose uses this; calculations go through :attr:`for_equity`.
     #:
     #: It must contain no digits that are not part of a card or range token —
     #: it lands in prompt prose, which the grounding checker scans for numbers
@@ -292,6 +300,54 @@ def _is_terminal_call(state: HandState, hero: str, to_call: float) -> bool:
     )
 
 
+def _equity_provenance(
+    equity_result: EquityResult, assumption: RangeAssumption
+) -> str:
+    """Where an equity figure gets its certainty — from *both* directions.
+
+    Two independent sources of error, and a figure is only as exact as the
+    weaker of them:
+
+    * whether the equity was enumerated or sampled, and
+    * whether the **range** it was measured against was itself derived by
+      simulation. A river enumeration against a conditioned range is exact
+      arithmetic on an uncertain input.
+
+    Neither implies the other, so neither may be inherited. This is the same
+    boundary the fact categories exist to police, one level up.
+    """
+
+    if not equity_result.exact:
+        return f"Monte Carlo, {equity_result.samples:,} samples"
+    if assumption.sampled:
+        return "exact enumeration, against a range narrowed by simulation"
+    return "exact enumeration"
+
+
+def _terminal_ev_provenance(
+    equity_result: EquityResult, assumption: RangeAssumption
+) -> str:
+    """Provenance for a terminal call's EV.
+
+    "Terminal" is a claim about the *decision tree* — no betting follows, so
+    ``equity * pot - (1 - equity) * to_call`` is the whole story. It is not a
+    claim about the precision of the equity feeding it. A flop call that puts
+    hero all-in is terminal and its equity is sampled; the unconditional
+    "exact for a terminal call" told the model otherwise, and since provenance
+    now reaches the prompt it told it in so many words.
+    """
+
+    tree = "terminal decision tree — no betting follows"
+    if not equity_result.exact:
+        return (
+            f"{tree}; computed from Monte Carlo equity, "
+            f"{equity_result.samples:,} samples"
+        )
+    if assumption.sampled:
+        return f"{tree}; exact arithmetic against a range narrowed by simulation"
+    return f"exact under the stated fixed range; {tree}"
+
+
 def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
     """Assemble the fact list, each carrying its own semantics."""
 
@@ -406,8 +462,7 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                 assumption.provenance,
                 "all remaining cards are dealt with no further betting",
             ),
-            provenance="exact enumeration" if equity_result.exact
-            else f"Monte Carlo, {equity_result.samples:,} samples",
+            provenance=_equity_provenance(equity_result, assumption),
             scope="share of the pot at showdown; NOT the share hero actually "
                   "realises once future betting is accounted for",
         )
@@ -445,7 +500,9 @@ def _build_facts(analysis_kwargs: dict) -> list[AnalysisFact]:
                     f"{a['ev_call_vs_fold']:+.2f} chips",
                     FactCategory.ASSUMED,
                     assumptions=(f"villain holds exactly: {assumption.display}",),
-                    provenance="exact for a terminal call — no betting follows",
+                    provenance=_terminal_ev_provenance(
+                        equity_result, assumption
+                    ),
                     scope="compares CALLING with FOLDING only; it does not "
                           "evaluate raising",
                 )

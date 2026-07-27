@@ -134,11 +134,68 @@ def test_a_call_that_puts_villain_all_in_is_terminal():
     assert a.ev_is_terminal is True
 
 
-def test_terminal_ev_is_labelled_exact():
-    a = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0)
+def test_a_terminal_call_against_a_fixed_range_earns_the_strong_wording():
+    """River, enumerated equity, caller-supplied range: nothing is estimated."""
+
+    a = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0,
+                 villain_range="22+, A2s+, K9s+")
+    assert a.equity.exact
+    assert not a.range_assumption.sampled
+
     f = fact(a, "EV of calling")
-    assert "exact for a terminal call" in f.provenance
     assert "if equity were fully realised" not in f.key
+    assert "exact under the stated fixed range" in f.provenance
+    assert "terminal decision tree" in f.provenance
+
+
+def test_a_terminal_call_on_sampled_equity_is_not_called_exact():
+    """A flop call that puts hero all-in is terminal and *estimated*.
+
+    "Terminal" is a claim about the decision tree — no betting follows — not
+    about the precision of the equity feeding it. Since provenance now reaches
+    the prompt, an unconditional "exact for a terminal call" told the model in
+    so many words that a Monte Carlo figure was certain.
+    """
+
+    a = analysed(hero_stack=6.0, villain_stack=200.0, bet=6.0)
+    assert a.ev_is_terminal is True
+    assert not a.equity.exact
+
+    f = fact(a, "EV of calling")
+    assert "exact" not in f.provenance
+    assert "terminal decision tree" in f.provenance
+    assert "Monte Carlo" in f.provenance
+    assert str(a.equity.samples) in f.provenance.replace(",", "")
+
+
+def test_a_terminal_call_against_a_sampled_range_says_which_part_is_exact():
+    """Exact arithmetic on an uncertain input. Both halves have to be said."""
+
+    a = analysed(
+        board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0, bet=10.0,
+        villain_range=RangeAssumption(
+            "22+, A2s+, K9s+",
+            RangeConditioning.ACTION_CONDITIONED,
+            label="a derived read", sampled=True,
+        ),
+    )
+    assert a.equity.exact
+    assert a.range_assumption.sampled
+
+    f = fact(a, "EV of calling")
+    assert "terminal decision tree" in f.provenance
+    assert "narrowed by simulation" in f.provenance
+    # The equity fact has to make the same distinction, or the two disagree.
+    assert "narrowed by simulation" in fact(a, "Hero equity").provenance
+
+
+def test_the_equity_fact_never_calls_a_sampled_range_plain_enumeration():
+    exact_range = analysed(board="Qs2s9c4d7h", street=Street.RIVER, pot=20.0,
+                           villain_range="22+, A2s+, K9s+")
+    assert fact(exact_range, "Hero equity").provenance == "exact enumeration"
+
+    sampled_equity = analysed()
+    assert "Monte Carlo" in fact(sampled_equity, "Hero equity").provenance
 
 
 def test_non_terminal_ev_is_labelled_as_an_upper_bound():
